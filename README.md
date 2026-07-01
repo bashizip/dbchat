@@ -18,8 +18,7 @@ Connexion :
 dbchat mysql://dbchat:dbchat@localhost:3306/boutique
 ```
 
-La base `boutique` contient 8 catégories, 45 produits, 24 clients et 33 commandes avec
-leurs lignes. Idéal pour tester.
+Documentation complète du schéma et exemples → [`test-db/README.md`](test-db/README.md)
 
 ## Installation
 
