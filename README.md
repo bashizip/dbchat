@@ -7,6 +7,20 @@ dbchat postgres://user:pass@localhost/mydb
 dbchat> "donne-moi les 5 derniers clients"
 ```
 
+## Base de test (Docker)
+
+```bash
+cd test-db && docker compose up -d
+```
+
+Connexion :
+```bash
+dbchat mysql://dbchat:dbchat@localhost:3306/boutique
+```
+
+La base `boutique` contient 8 catégories, 45 produits, 24 clients et 33 commandes avec
+leurs lignes. Idéal pour tester.
+
 ## Installation
 
 ### Via curl (recommandé)
