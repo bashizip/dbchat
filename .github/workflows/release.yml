@@ -5,6 +5,9 @@ on:
     tags:
       - "v*.*.*"
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build ${{ matrix.target }}
@@ -28,7 +31,15 @@ jobs:
         with:
           target: ${{ matrix.target }}
 
+      - name: Install Linux cross toolchain
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
       - run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Package
         shell: bash
@@ -45,10 +56,27 @@ jobs:
           cp "target/$TARGET/release/dbchat" "$TMPDIR/"
           cp README.md "$TMPDIR/" || true
           tar -czf "$ARCHIVE" -C "$TMPDIR" .
-          shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dbchat-*.tar.gz
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum dbchat-*.tar.gz > SHA256SUMS
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dbchat-*.tar.gz
-            dbchat-*.tar.gz.sha256
+          files: dist/*
