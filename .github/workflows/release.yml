@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+
+      - run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          OS_ARCH="${{ matrix.target }}"
+          OS_ARCH="${OS_ARCH//unknown-/}"
+          OS_ARCH="${OS_ARCH//-gnu/}"
+          ARCHIVE="dbchat-${OS_ARCH}.tar.gz"
+          TMPDIR=$(mktemp -d)
+          cp "target/${{ matrix.target }}/release/dbchat" "$TMPDIR/"
+          cp README.md "$TMPDIR/" || true
+          tar -czf "$ARCHIVE" -C "$TMPDIR" .
+          shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dbchat-*.tar.gz
+            dbchat-*.tar.gz.sha256

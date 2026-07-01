@@ -9,6 +9,20 @@ dbchat> "donne-moi les 5 derniers clients"
 
 ## Installation
 
+### Via curl (recommandé)
+
+```bash
+curl -sSfL https://github.com/pbash/dbchat/releases/latest/download/install.sh | bash
+```
+
+Installation dans un répertoire personnalisé :
+
+```bash
+curl -sSfL https://github.com/pbash/dbchat/releases/latest/download/install.sh | bash -s -- latest ~/.local/bin
+```
+
+### Via cargo
+
 ```bash
 cargo install --path .
 ```
