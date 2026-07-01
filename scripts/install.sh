@@ -31,6 +31,7 @@ need_cmd() {
 need_cmd curl
 need_cmd tar
 need_cmd shasum
+need_cmd ln
 
 if [ -t 1 ]; then
   echo "" # blank line for spacing in terminal
@@ -98,11 +99,30 @@ tar -xzf "$TMPDIR/$ARCHIVE" -C "$TMPDIR"
 
 # ── Install ────────────────────────────────────────────────
 BINARY="$TMPDIR/dbchat"
+DBCHAT_BIN="$INSTALL_DIR/dbchat"
+DHCHAT_BIN="$INSTALL_DIR/dhchat"
 
 if [ ! -f "$BINARY" ]; then
   echo "${RED}✗${NC} Binary not found in archive"
   exit 1
 fi
+
+install_dhchat_alias() {
+  if [ -e "$DHCHAT_BIN" ] && [ ! -L "$DHCHAT_BIN" ]; then
+    if [ "$DHCHAT_BIN" -ef "$DBCHAT_BIN" ] 2>/dev/null; then
+      return 0
+    fi
+
+    echo "${DIM}Skipping dhchat alias; $DHCHAT_BIN already exists.${NC}"
+    return 0
+  fi
+
+  if [ ! -w "$INSTALL_DIR" ]; then
+    sudo ln -sf dbchat "$DHCHAT_BIN"
+  else
+    ln -sf dbchat "$DHCHAT_BIN"
+  fi
+}
 
 if [ ! -d "$INSTALL_DIR" ]; then
   if ! mkdir -p "$INSTALL_DIR" 2>/dev/null; then
@@ -113,13 +133,16 @@ fi
 
 if [ ! -w "$INSTALL_DIR" ]; then
   echo "${CYAN}ℹ${NC} Need sudo to install to ${BOLD}$INSTALL_DIR${NC}"
-  sudo mv "$BINARY" "$INSTALL_DIR/dbchat"
-  sudo chmod +x "$INSTALL_DIR/dbchat"
+  sudo mv "$BINARY" "$DBCHAT_BIN"
+  sudo chmod +x "$DBCHAT_BIN"
 else
-  mv "$BINARY" "$INSTALL_DIR/dbchat"
-  chmod +x "$INSTALL_DIR/dbchat"
+  mv "$BINARY" "$DBCHAT_BIN"
+  chmod +x "$DBCHAT_BIN"
 fi
 
-echo "${GREEN}✓${NC} Installed ${BOLD}dbchat${NC} to ${BOLD}$INSTALL_DIR/dbchat${NC}"
+install_dhchat_alias
+
+echo "${GREEN}✓${NC} Installed ${BOLD}dbchat${NC} to ${BOLD}$DBCHAT_BIN${NC}"
 echo ""
 echo "  Run:  ${CYAN}dbchat --help${NC}"
+echo "  Alias: ${CYAN}dhchat --help${NC}"
