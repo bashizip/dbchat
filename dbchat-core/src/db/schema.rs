@@ -139,7 +139,7 @@ impl DbConnector {
             }
             DbConnector::MySql(pool) => {
                 let rows = sqlx::query(
-                    "SELECT table_name FROM information_schema.tables \
+                    "SELECT CAST(table_name AS CHAR) AS table_name FROM information_schema.tables \
                      WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' \
                      ORDER BY table_name",
                 )
@@ -257,7 +257,7 @@ async fn get_sample_data_postgres(
 
 async fn introspect_mysql_schema(pool: &sqlx::Pool<sqlx::MySql>) -> Result<SchemaInfo> {
     let table_rows: Vec<sqlx::mysql::MySqlRow> = sqlx::query(
-        "SELECT table_name FROM information_schema.tables \
+        "SELECT CAST(table_name AS CHAR) AS table_name FROM information_schema.tables \
          WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' \
          ORDER BY table_name",
     )
@@ -266,7 +266,7 @@ async fn introspect_mysql_schema(pool: &sqlx::Pool<sqlx::MySql>) -> Result<Schem
 
     let mut tables = Vec::new();
     for row in &table_rows {
-        let table_name: String = row.get("table_name");
+        let table_name: String = row.try_get(0)?;
         let columns = introspect_mysql_columns(pool, &table_name).await?;
         let row_count = get_row_count_mysql(pool, &table_name).await;
         let sample_rows = get_sample_data_mysql(pool, &table_name, &columns).await;
@@ -286,11 +286,14 @@ async fn introspect_mysql_columns(
 ) -> Result<Vec<ColumnInfo>> {
     let rows = sqlx::query(
         r#"
-        SELECT c.column_name, c.data_type, c.is_nullable, c.column_default,
-               CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END as is_pk
+        SELECT CAST(c.column_name AS CHAR) AS column_name,
+               CAST(c.data_type AS CHAR) AS data_type,
+               CAST(c.is_nullable AS CHAR) AS is_nullable,
+               CAST(c.column_default AS CHAR) AS column_default,
+               CAST(CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END AS SIGNED) AS is_pk
         FROM information_schema.columns c
         LEFT JOIN (
-            SELECT ku.column_name
+            SELECT CAST(ku.column_name AS CHAR) AS column_name
             FROM information_schema.table_constraints tc
             JOIN information_schema.key_column_usage ku
                 ON tc.constraint_name = ku.constraint_name AND tc.table_schema = ku.table_schema
@@ -308,11 +311,11 @@ async fn introspect_mysql_columns(
     let mut columns = Vec::new();
     for r in &rows {
         columns.push(ColumnInfo {
-            name: r.get("column_name"),
-            data_type: r.get("data_type"),
-            is_nullable: r.get::<String, _>("is_nullable") == "YES",
-            is_primary_key: r.get("is_pk"),
-            default: r.get("column_default"),
+            name: r.try_get(0)?,
+            data_type: r.try_get(1)?,
+            is_nullable: r.try_get::<String, _>(2)? == "YES",
+            default: r.try_get(3)?,
+            is_primary_key: r.try_get::<i64, _>(4)? != 0,
             is_foreign_key: false,
             fk_ref: None,
         });
