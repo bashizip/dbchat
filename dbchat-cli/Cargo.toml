@@ -1,0 +1,38 @@
+[package]
+name = "dbchat-cli"
+version = "0.1.0"
+edition = "2024"
+description = "dbchat - Chat with your database using natural language"
+
+[[bin]]
+name = "dbchat"
+path = "src/main.rs"
+
+[dependencies]
+dbchat-core = { path = "../dbchat-core" }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# CLI arguments
+clap = { version = "4", features = ["derive", "env"] }
+
+# REPL
+rustyline = "15"
+
+# For comfy-table in render
+comfy-table = "7"
+
+# JSON value rendering
+serde_json = "1"
+
+# CSV output
+csv = "1"
+
+# For config serialization
+toml = "0.8"
+
+# Errors
+color-eyre = "0.6"
+
+
