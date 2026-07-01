@@ -137,7 +137,7 @@ Explique ces résultats en langage naturel simple. Réponds en français."#
 
     fn build_chat_body(&self, system: &str, user: &str) -> serde_json::Value {
         match self.config.provider {
-            LlmProvider::OpenAI | LlmProvider::Ollama | LlmProvider::Google => {
+            LlmProvider::OpenAI | LlmProvider::Ollama | LlmProvider::OpenAICompatible => {
                 serde_json::json!({
                     "model": self.config.model,
                     "messages": [
@@ -145,6 +145,26 @@ Explique ces résultats en langage naturel simple. Réponds en français."#
                         {"role": "user", "content": user}
                     ],
                     "temperature": self.config.temperature
+                })
+            }
+            LlmProvider::Google => {
+                serde_json::json!({
+                    "systemInstruction": {
+                        "parts": [
+                            {"text": system}
+                        ]
+                    },
+                    "contents": [
+                        {
+                            "role": "user",
+                            "parts": [
+                                {"text": user}
+                            ]
+                        }
+                    ],
+                    "generationConfig": {
+                        "temperature": self.config.temperature
+                    }
                 })
             }
             LlmProvider::Anthropic => {
@@ -161,22 +181,33 @@ Explique ces résultats en langage naturel simple. Réponds en français."#
         }
     }
 
-    fn api_url(&self) -> &str {
+    fn api_url(&self) -> Result<String> {
         if let Some(ref url) = self.config.api_url {
-            return url;
+            return Ok(
+                if matches!(self.config.provider, LlmProvider::OpenAICompatible) {
+                    openai_compatible_chat_url(url)
+                } else {
+                    url.clone()
+                },
+            );
         }
         match self.config.provider {
-            LlmProvider::OpenAI => "https://api.openai.com/v1/chat/completions",
-            LlmProvider::Anthropic => "https://api.anthropic.com/v1/messages",
-            LlmProvider::Ollama => "http://localhost:11434/api/chat",
-            LlmProvider::Google => "https://generativelanguage.googleapis.com/v1beta/models/",
+            LlmProvider::OpenAI => Ok("https://api.openai.com/v1/chat/completions".to_string()),
+            LlmProvider::Anthropic => Ok("https://api.anthropic.com/v1/messages".to_string()),
+            LlmProvider::Ollama => Ok("http://localhost:11434/api/chat".to_string()),
+            LlmProvider::Google => Ok(google_generate_content_url(&self.config.model)),
+            LlmProvider::OpenAICompatible => Err(DbChatError::Config(
+                "api_url is required for OpenAI-compatible LLM providers".to_string(),
+            )),
         }
     }
 
     fn api_key_header(&self) -> (&'static str, String) {
         let key = self.config.api_key.clone().unwrap_or_default();
         match self.config.provider {
-            LlmProvider::OpenAI => ("Authorization", format!("Bearer {key}")),
+            LlmProvider::OpenAI | LlmProvider::OpenAICompatible => {
+                ("Authorization", format!("Bearer {key}"))
+            }
             LlmProvider::Anthropic => ("x-api-key", key),
             LlmProvider::Ollama => ("Content-Type", "application/json".to_string()),
             LlmProvider::Google => ("x-goog-api-key", key),
@@ -184,7 +215,7 @@ Explique ces résultats en langage naturel simple. Réponds en français."#
     }
 
     async fn send_request(&self, body: serde_json::Value) -> Result<String> {
-        let url = self.api_url();
+        let url = self.api_url()?;
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()
@@ -192,12 +223,10 @@ Explique ces résultats en langage naturel simple. Réponds en français."#
 
         let (header_name, header_value) = self.api_key_header();
 
-        let req = client.post(url).header(header_name, &header_value);
-        let req = if matches!(self.config.provider, LlmProvider::Ollama) {
-            req.json(&body)
-        } else {
-            req.json(&body)
-        };
+        let req = client
+            .post(&url)
+            .header(header_name, &header_value)
+            .json(&body);
 
         let resp = req
             .send()
@@ -222,6 +251,20 @@ Explique ces résultats en langage naturel simple. Réponds en français."#
     }
 }
 
+fn openai_compatible_chat_url(base_or_url: &str) -> String {
+    let trimmed = base_or_url.trim_end_matches('/');
+    if trimmed.ends_with("/chat/completions") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/chat/completions")
+    }
+}
+
+fn google_generate_content_url(model: &str) -> String {
+    let model = model.trim().trim_start_matches("models/");
+    format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent")
+}
+
 fn extract_content(json_str: &str) -> String {
     let v: serde_json::Value = match serde_json::from_str(json_str) {
         Ok(v) => v,
@@ -244,6 +287,25 @@ fn extract_content(json_str: &str) -> String {
         if let Some(block) = content_blocks.get(0) {
             if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
                 return text.to_string();
+            }
+        }
+    }
+
+    // Gemini generateContent format
+    if let Some(candidates) = v.get("candidates").and_then(|c| c.as_array()) {
+        if let Some(parts) = candidates
+            .first()
+            .and_then(|candidate| candidate.get("content"))
+            .and_then(|content| content.get("parts"))
+            .and_then(|parts| parts.as_array())
+        {
+            let text = parts
+                .iter()
+                .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !text.is_empty() {
+                return text;
             }
         }
     }
@@ -297,4 +359,65 @@ fn extract_sql(text: &str) -> String {
         .join("\n")
         .trim()
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_openai_compatible_base_url() {
+        assert_eq!(
+            openai_compatible_chat_url("https://api.deepseek.com"),
+            "https://api.deepseek.com/chat/completions"
+        );
+        assert_eq!(
+            openai_compatible_chat_url("https://example.com/v1/chat/completions"),
+            "https://example.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn builds_google_generate_content_url_from_model() {
+        assert_eq!(
+            google_generate_content_url("gemini-3.1-flash-lite"),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent"
+        );
+        assert_eq!(
+            google_generate_content_url("models/gemini-3.5-flash"),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
+        );
+    }
+
+    #[test]
+    fn builds_google_generate_content_body() {
+        let mut config = LlmConfig::default();
+        config.provider = LlmProvider::Google;
+        config.model = "gemini-3.1-flash-lite".to_string();
+        config.temperature = 0.2;
+        let client = LlmClient::new(config);
+
+        let body = client.build_chat_body("system prompt", "user prompt");
+
+        assert_eq!(
+            body["systemInstruction"]["parts"][0]["text"],
+            "system prompt"
+        );
+        assert_eq!(body["contents"][0]["parts"][0]["text"], "user prompt");
+        assert_eq!(body["generationConfig"]["temperature"].as_f64(), Some(0.2));
+        assert!(body.get("model").is_none());
+    }
+
+    #[test]
+    fn extracts_openai_compatible_content() {
+        let response = r#"{"choices":[{"message":{"content":"SELECT 1;"}}]}"#;
+        assert_eq!(extract_content(response), "SELECT 1;");
+    }
+
+    #[test]
+    fn extracts_google_generate_content() {
+        let response =
+            r#"{"candidates":[{"content":{"parts":[{"text":"SELECT 1;"},{"text":"-- ok"}]}}]}"#;
+        assert_eq!(extract_content(response), "SELECT 1;\n-- ok");
+    }
 }

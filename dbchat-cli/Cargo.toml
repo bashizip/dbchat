@@ -17,6 +17,9 @@ tokio = { version = "1", features = ["full"] }
 # CLI arguments
 clap = { version = "4", features = ["derive", "env"] }
 
+# Interactive configuration
+dialoguer = "0.11"
+
 # REPL
 rustyline = "15"
 
@@ -34,5 +37,4 @@ toml = "0.8"
 
 # Errors
 color-eyre = "0.6"
-
 

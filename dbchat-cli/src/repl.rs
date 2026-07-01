@@ -171,6 +171,7 @@ async fn handle_command(
                     dbchat_core::config::LlmProvider::Anthropic => "Anthropic",
                     dbchat_core::config::LlmProvider::Ollama => "Ollama",
                     dbchat_core::config::LlmProvider::Google => "Google",
+                    dbchat_core::config::LlmProvider::OpenAICompatible => "OpenAI-compatible",
                 }
             );
             println!(

@@ -43,12 +43,22 @@ impl Default for DbConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum LlmProvider {
+    #[serde(rename = "openai", alias = "OpenAI")]
     OpenAI,
+    #[serde(rename = "anthropic", alias = "Anthropic")]
     Anthropic,
+    #[serde(rename = "ollama", alias = "Ollama")]
     Ollama,
+    #[serde(rename = "google", alias = "Google")]
     Google,
+    #[serde(
+        rename = "openai-compatible",
+        alias = "OpenAICompatible",
+        alias = "openai_compatible"
+    )]
+    OpenAICompatible,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,10 +73,10 @@ pub struct LlmConfig {
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
-            provider: LlmProvider::OpenAI,
-            model: String::from("gpt-4o-mini"),
+            provider: LlmProvider::Google,
+            model: String::from("gemini-3.1-flash-lite"),
             temperature: 0.0,
-            api_key: None,
+            api_key: Some(String::from("env:GOOGLE_API_KEY")),
             api_url: None,
         }
     }
@@ -162,6 +172,16 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    pub fn load_existing() -> Option<Self> {
+        let path = Self::config_path();
+        let content = std::fs::read_to_string(&path).ok()?;
+        toml::from_str(&content).ok()
+    }
+
+    pub fn has_database_uri(&self) -> bool {
+        !self.db.uri.trim().is_empty()
+    }
+
     pub fn from_uri(uri: &str) -> Result<Self, String> {
         let engine = if uri.starts_with("postgres://") || uri.starts_with("postgresql://") {
             DbEngine::Postgres
@@ -219,14 +239,29 @@ impl AppConfig {
     }
 
     pub fn resolve_llm_api_key(&mut self) {
-        if self.llm.api_key.is_none() {
-            self.llm.api_key = match self.llm.provider {
-                LlmProvider::OpenAI => std::env::var("OPENAI_API_KEY").ok(),
-                LlmProvider::Anthropic => std::env::var("ANTHROPIC_API_KEY").ok(),
-                LlmProvider::Ollama => Some(String::new()),
-                LlmProvider::Google => std::env::var("GOOGLE_API_KEY").ok(),
-            };
+        if let Some(value) = self.llm.api_key.clone() {
+            if let Some(var) = value.strip_prefix("env:") {
+                self.llm.api_key = std::env::var(var).ok();
+            }
+            return;
         }
+
+        self.llm.api_key = match self.llm.provider {
+            LlmProvider::OpenAI => std::env::var("OPENAI_API_KEY").ok(),
+            LlmProvider::Anthropic => std::env::var("ANTHROPIC_API_KEY").ok(),
+            LlmProvider::Ollama => Some(String::new()),
+            LlmProvider::Google => std::env::var("GOOGLE_API_KEY").ok(),
+            LlmProvider::OpenAICompatible => {
+                let api_url = self.llm.api_url.as_deref().unwrap_or_default();
+                if api_url.contains("openrouter.ai") {
+                    std::env::var("OPENROUTER_API_KEY").ok()
+                } else if api_url.contains("deepseek.com") {
+                    std::env::var("DEEPSEEK_API_KEY").ok()
+                } else {
+                    std::env::var("OPENAI_COMPATIBLE_API_KEY").ok()
+                }
+            }
+        };
     }
 }
 
@@ -262,5 +297,52 @@ mod tests {
     #[test]
     fn test_from_uri_invalid() {
         assert!(AppConfig::from_uri("mongodb://localhost/db").is_err());
+    }
+
+    #[test]
+    fn test_has_database_uri() {
+        let mut config = AppConfig::default();
+        assert!(!config.has_database_uri());
+        config.db.uri = "mysql://user:pass@localhost/db".to_string();
+        assert!(config.has_database_uri());
+    }
+
+    #[test]
+    fn test_openai_compatible_serializes() {
+        let mut config = AppConfig::default();
+        config.llm.provider = LlmProvider::OpenAICompatible;
+        let content = toml::to_string(&config).unwrap();
+        assert!(content.contains("openai-compatible"));
+        let parsed: AppConfig = toml::from_str(&content).unwrap();
+        assert_eq!(parsed.llm.provider, LlmProvider::OpenAICompatible);
+    }
+
+    #[test]
+    fn test_legacy_openai_compatible_deserializes() {
+        let content = r#"
+[db]
+engine = "Postgres"
+uri = ""
+max_connections = 5
+query_timeout_secs = 30
+read_only = true
+max_rows = 1000
+safe_mode = true
+
+[llm]
+provider = "OpenAICompatible"
+model = "deepseek-v4-flash"
+temperature = 0.0
+
+[display]
+theme = "Dark"
+locale = "En"
+show_sql = true
+show_timing = true
+format = "Table"
+verbose = false
+"#;
+        let parsed: AppConfig = toml::from_str(content).unwrap();
+        assert_eq!(parsed.llm.provider, LlmProvider::OpenAICompatible);
     }
 }
