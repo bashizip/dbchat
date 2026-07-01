@@ -25,13 +25,13 @@ Documentation complète du schéma et exemples → [`test-db/README.md`](test-db
 ### Via curl (recommandé)
 
 ```bash
-curl -sSfL https://raw.githubusercontent.com/bashizip/dbchat/main/scripts/install.sh | bash
+curl -sSfL https://raw.githubusercontent.com/bashizip/dbchat/refs/heads/main/scripts/install.sh | bash
 ```
 
 Installation dans un répertoire personnalisé :
 
 ```bash
-curl -sSfL https://raw.githubusercontent.com/bashizip/dbchat/main/scripts/install.sh | bash -s -- latest ~/.local/bin
+curl -sSfL https://raw.githubusercontent.com/bashizip/dbchat/refs/heads/main/scripts/install.sh | bash -s -- latest ~/.local/bin
 ```
 
 ### Via cargo
