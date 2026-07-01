@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="pbash/dbchat"
+REPO="bashizip/dbchat"
 VERSION="${1:-latest}"
 INSTALL_DIR="${2:-/usr/local/bin}"
 
