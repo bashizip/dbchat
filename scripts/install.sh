@@ -5,12 +5,21 @@ REPO="bashizip/dbchat"
 VERSION="${1:-latest}"
 INSTALL_DIR="${2:-/usr/local/bin}"
 
-BOLD='\033[1m'
-GREEN='\033[32m'
-CYAN='\033[36m'
-RED='\033[31m'
-DIM='\033[2m'
-NC='\033[0m'
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  BOLD="$(printf '\033[1m')"
+  GREEN="$(printf '\033[32m')"
+  CYAN="$(printf '\033[36m')"
+  RED="$(printf '\033[31m')"
+  DIM="$(printf '\033[2m')"
+  NC="$(printf '\033[0m')"
+else
+  BOLD=""
+  GREEN=""
+  CYAN=""
+  RED=""
+  DIM=""
+  NC=""
+fi
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
