@@ -33,12 +33,16 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          OS_ARCH="${{ matrix.target }}"
-          OS_ARCH="${OS_ARCH//unknown-/}"
-          OS_ARCH="${OS_ARCH//-gnu/}"
+          TARGET="${{ matrix.target }}"
+          case "$TARGET" in
+            x86_64-apple-darwin)    OS_ARCH="darwin-x86_64" ;;
+            aarch64-apple-darwin)   OS_ARCH="darwin-aarch64" ;;
+            x86_64-unknown-linux-gnu) OS_ARCH="linux-x86_64" ;;
+            aarch64-unknown-linux-gnu) OS_ARCH="linux-aarch64" ;;
+          esac
           ARCHIVE="dbchat-${OS_ARCH}.tar.gz"
           TMPDIR=$(mktemp -d)
-          cp "target/${{ matrix.target }}/release/dbchat" "$TMPDIR/"
+          cp "target/$TARGET/release/dbchat" "$TMPDIR/"
           cp README.md "$TMPDIR/" || true
           tar -czf "$ARCHIVE" -C "$TMPDIR" .
           shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
