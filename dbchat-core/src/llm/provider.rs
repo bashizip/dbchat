@@ -82,7 +82,12 @@ Règles impératives :
         if trimmed.starts_with("DESTRUCTIVE:") {
             return Ok(SqlGeneration {
                 sql: String::new(),
-                explanation: Some(trimmed.trim_start_matches("DESTRUCTIVE:").trim().to_string()),
+                explanation: Some(
+                    trimmed
+                        .trim_start_matches("DESTRUCTIVE:")
+                        .trim()
+                        .to_string(),
+                ),
                 raw_response: raw,
             });
         }

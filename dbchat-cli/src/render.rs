@@ -1,7 +1,7 @@
+use comfy_table::{Cell, CellAlignment, Table, presets::UTF8_FULL};
+use dbchat_core::ChatResponse;
 use dbchat_core::config::Locale;
 use dbchat_core::error::DbChatError;
-use dbchat_core::ChatResponse;
-use comfy_table::{Cell, CellAlignment, Table, presets::UTF8_FULL};
 
 pub fn render_response(response: &ChatResponse, format: &str, locale: &Locale) {
     match format {
@@ -13,7 +13,11 @@ pub fn render_response(response: &ChatResponse, format: &str, locale: &Locale) {
 
 fn render_json(response: &ChatResponse) {
     match response {
-        ChatResponse::Result { sql, result, elapsed } => {
+        ChatResponse::Result {
+            sql,
+            result,
+            elapsed,
+        } => {
             let rows: Vec<serde_json::Value> = result
                 .values()
                 .iter()
@@ -21,7 +25,10 @@ fn render_json(response: &ChatResponse) {
                     let cols = result.columns();
                     let mut map = serde_json::Map::new();
                     for (i, col) in cols.iter().enumerate() {
-                        map.insert(col.clone(), row.get(i).cloned().unwrap_or(serde_json::Value::Null));
+                        map.insert(
+                            col.clone(),
+                            row.get(i).cloned().unwrap_or(serde_json::Value::Null),
+                        );
                     }
                     serde_json::Value::Object(map)
                 })
@@ -35,7 +42,10 @@ fn render_json(response: &ChatResponse) {
             println!("{}", serde_json::to_string_pretty(&output).unwrap());
         }
         ChatResponse::ConfirmDestructive(sql) => {
-            println!("{}", serde_json::json!({ "warning": "destructive_query", "sql": sql }));
+            println!(
+                "{}",
+                serde_json::json!({ "warning": "destructive_query", "sql": sql })
+            );
         }
         ChatResponse::Info(msg) => {
             println!("{}", serde_json::json!({ "info": msg }));
@@ -76,7 +86,11 @@ fn render_csv(response: &ChatResponse) {
 
 fn render_table_default(response: &ChatResponse, locale: &Locale) {
     match response {
-        ChatResponse::Result { sql, result, elapsed } => {
+        ChatResponse::Result {
+            sql,
+            result,
+            elapsed,
+        } => {
             if locale.t("", "") == "" {
                 // always show SQL
             }
@@ -87,7 +101,9 @@ fn render_table_default(response: &ChatResponse, locale: &Locale) {
                 let timing = format!("{:.3}s", elapsed.as_secs_f64());
                 let label = locale.t("▶ Résultat:", "▶ Result:");
                 let rows_label = locale.t("lignes", "rows");
-                println!("\x1b[1;32m{label}\x1b[0m \x1b[1m{rows}\x1b[0m {rows_label} (\x1b[2m{timing}\x1b[0m)");
+                println!(
+                    "\x1b[1;32m{label}\x1b[0m \x1b[1m{rows}\x1b[0m {rows_label} (\x1b[2m{timing}\x1b[0m)"
+                );
                 if rows > 0 && !columns.is_empty() {
                     render_table(&columns, &values);
                 } else {
@@ -98,7 +114,9 @@ fn render_table_default(response: &ChatResponse, locale: &Locale) {
                 let affected = result.rows_affected();
                 let timing = format!("{:.3}s", elapsed.as_secs_f64());
                 let label = locale.t("ligne(s) affectée(s)", "row(s) affected");
-                println!("\x1b[1;32m✓\x1b[0m \x1b[1m{affected}\x1b[0m {label} (\x1b[2m{timing}\x1b[0m)");
+                println!(
+                    "\x1b[1;32m✓\x1b[0m \x1b[1m{affected}\x1b[0m {label} (\x1b[2m{timing}\x1b[0m)"
+                );
             }
 
             if !sql.is_empty() {
@@ -107,7 +125,10 @@ fn render_table_default(response: &ChatResponse, locale: &Locale) {
             }
         }
         ChatResponse::ConfirmDestructive(sql) => {
-            let warn = locale.t("⚠ ATTENTION Requête destructive détectée:", "⚠ WARNING Destructive query detected:");
+            let warn = locale.t(
+                "⚠ ATTENTION Requête destructive détectée:",
+                "⚠ WARNING Destructive query detected:",
+            );
             println!("\x1b[1;31m{warn}\x1b[0m");
             println!("  \x1b[33m{sql}\x1b[0m");
             let hint = locale.t(
@@ -158,9 +179,11 @@ pub fn render_table(columns: &[String], values: &[Vec<serde_json::Value>]) {
 
     if values.len() > 100 {
         let more = values.len() - 100;
-        table.add_row(vec![Cell::new(format!("... et {more} lignes supplémentaires"))
-            .set_alignment(CellAlignment::Center)
-            .fg(comfy_table::Color::DarkGrey)]);
+        table.add_row(vec![
+            Cell::new(format!("... et {more} lignes supplémentaires"))
+                .set_alignment(CellAlignment::Center)
+                .fg(comfy_table::Color::DarkGrey),
+        ]);
     }
 
     println!("{table}");
@@ -172,7 +195,9 @@ pub fn render_error(err: &DbChatError) {
             eprintln!("\x1b[1;31m❌ Erreur SQL:\x1b[0m \x1b[31m{e}\x1b[0m");
         }
         DbChatError::Timeout(secs) => {
-            eprintln!("\x1b[1;31m⏱ Délai d'attente dépassé ({secs}s).\x1b[0m Essayez une requête plus simple.");
+            eprintln!(
+                "\x1b[1;31m⏱ Délai d'attente dépassé ({secs}s).\x1b[0m Essayez une requête plus simple."
+            );
         }
         DbChatError::Llm(e) => {
             eprintln!("\x1b[1;31m🤖 Erreur LLM:\x1b[0m \x1b[31m{e}\x1b[0m");
@@ -227,6 +252,12 @@ pub fn render_help(locale: &Locale) {
     println!("{}", locale.t(fr, en));
 }
 
-pub fn print_green(s: impl AsRef<str>) { println!("\x1b[32m{}\x1b[0m", s.as_ref()); }
-pub fn print_red(s: impl AsRef<str>) { eprintln!("\x1b[31m{}\x1b[0m", s.as_ref()); }
-pub fn print_bold(s: impl AsRef<str>) { println!("\x1b[1m{}\x1b[0m", s.as_ref()); }
+pub fn print_green(s: impl AsRef<str>) {
+    println!("\x1b[32m{}\x1b[0m", s.as_ref());
+}
+pub fn print_red(s: impl AsRef<str>) {
+    eprintln!("\x1b[31m{}\x1b[0m", s.as_ref());
+}
+pub fn print_bold(s: impl AsRef<str>) {
+    println!("\x1b[1m{}\x1b[0m", s.as_ref());
+}

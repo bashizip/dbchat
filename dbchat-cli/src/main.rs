@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
-mod repl;
 mod render;
+mod repl;
 
 #[derive(Parser)]
 #[command(name = "dbchat")]
@@ -125,7 +125,8 @@ async fn main() -> color_eyre::Result<()> {
     let mut dbchat = dbchat_core::DbChat::connect(config).await?;
     println!(
         "\x1b[1;32m✓\x1b[0m {} \x1b[36m{uri}\x1b[0m",
-        locale.t("Connecté à", "Connected to")
+        locale.t("Connecté à", "Connected to"),
+        uri = redact_uri(&uri),
     );
     println!(
         "\x1b[34mℹ\x1b[0m {} {}",
@@ -141,14 +142,22 @@ async fn main() -> color_eyre::Result<()> {
 
 fn handle_config(cli: &Cli) -> color_eyre::Result<()> {
     let path = dbchat_core::AppConfig::config_path();
-    println!("\x1b[1mConfig file:\x1b[0m \x1b[36m{}\x1b[0m", path.display());
+    println!(
+        "\x1b[1mConfig file:\x1b[0m \x1b[36m{}\x1b[0m",
+        path.display()
+    );
 
-    let is_init = matches!(cli.command, Some(DbCommand::Config { action: Some(ConfigAction::Init) }));
+    let is_init = matches!(
+        cli.command,
+        Some(DbCommand::Config {
+            action: Some(ConfigAction::Init)
+        })
+    );
 
     if path.exists() && !is_init {
         let content = std::fs::read_to_string(&path)?;
         println!("\x1b[2m── Content ──\x1b[0m");
-        println!("{content}");
+        println!("{}", redact_config_content(&content));
     } else {
         let default = dbchat_core::AppConfig::default();
         let content = toml::to_string_pretty(&default).unwrap();
@@ -161,6 +170,72 @@ fn handle_config(cli: &Cli) -> color_eyre::Result<()> {
         println!("{content}");
     }
     Ok(())
+}
+
+fn redact_uri(uri: &str) -> String {
+    let Some(scheme_end) = uri.find("://") else {
+        return uri.to_string();
+    };
+    let credentials_start = scheme_end + 3;
+    let Some(at_rel) = uri[credentials_start..].find('@') else {
+        return uri.to_string();
+    };
+    let at = credentials_start + at_rel;
+    let credentials = &uri[credentials_start..at];
+    if credentials.is_empty() {
+        return uri.to_string();
+    }
+
+    let user = credentials
+        .split_once(':')
+        .map(|(user, _)| user)
+        .unwrap_or(credentials);
+    format!("{}{}:***{}", &uri[..credentials_start], user, &uri[at..])
+}
+
+fn redact_config_content(content: &str) -> String {
+    content
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("api_key") {
+                let indent_len = line.len() - trimmed.len();
+                format!("{}api_key = \"***\"", &line[..indent_len])
+            } else if trimmed.starts_with("uri") {
+                let indent_len = line.len() - trimmed.len();
+                let value = trimmed
+                    .split_once('=')
+                    .map(|(_, value)| value.trim().trim_matches('"'))
+                    .unwrap_or_default();
+                format!("{}uri = \"{}\"", &line[..indent_len], redact_uri(value))
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redacts_password_from_database_uri() {
+        assert_eq!(
+            redact_uri("postgres://user:secret@localhost/db"),
+            "postgres://user:***@localhost/db"
+        );
+    }
+
+    #[test]
+    fn redacts_config_secrets() {
+        let content = "uri = \"mysql://u:p@localhost/db\"\napi_key = \"sk-test\"";
+        assert_eq!(
+            redact_config_content(content),
+            "uri = \"mysql://u:***@localhost/db\"\napi_key = \"***\""
+        );
+    }
 }
 
 fn resolve_uri(cli: &Cli) -> Result<String, color_eyre::eyre::Error> {

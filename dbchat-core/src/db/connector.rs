@@ -1,7 +1,7 @@
-use sqlx::postgres::PgPoolOptions;
 use sqlx::mysql::MySqlPoolOptions;
+use sqlx::postgres::PgPoolOptions;
 use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::{Column, Pool, Postgres, MySql, Sqlite, Row};
+use sqlx::{Column, MySql, Pool, Postgres, Row, Sqlite};
 
 use crate::config::DbEngine;
 use crate::error::{DbChatError, Result};
@@ -52,7 +52,10 @@ macro_rules! build_result_from_rows {
                 columns
                     .iter()
                     .map(|col_name| {
-                        let idx = r.columns().iter().position(|c| c.name() == col_name.as_str());
+                        let idx = r
+                            .columns()
+                            .iter()
+                            .position(|c| c.name() == col_name.as_str());
                         match idx {
                             Some(i) => row_value!(r, i),
                             None => serde_json::Value::Null,

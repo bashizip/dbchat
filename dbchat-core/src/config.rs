@@ -96,7 +96,13 @@ impl Locale {
         std::env::var("LANG")
             .or_else(|_| std::env::var("LC_ALL"))
             .or_else(|_| std::env::var("LC_MESSAGES"))
-            .map(|lang| if lang.to_lowercase().starts_with("fr") { Locale::Fr } else { Locale::En })
+            .map(|lang| {
+                if lang.to_lowercase().starts_with("fr") {
+                    Locale::Fr
+                } else {
+                    Locale::En
+                }
+            })
             .unwrap_or(Locale::En)
     }
 
@@ -203,7 +209,10 @@ impl AppConfig {
         if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
             PathBuf::from(dir).join("dbchat").join("config.toml")
         } else if let Some(home) = std::env::var("HOME").ok() {
-            PathBuf::from(home).join(".config").join("dbchat").join("config.toml")
+            PathBuf::from(home)
+                .join(".config")
+                .join("dbchat")
+                .join("config.toml")
         } else {
             PathBuf::from("./dbchat.toml")
         }

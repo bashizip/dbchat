@@ -6,12 +6,28 @@ set -euo pipefail
 
 VERSION="${1:-$(grep '^version =' dbchat-cli/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')}"
 DIST_DIR="dist"
+CYAN='\033[36m'
+GREEN='\033[32m'
+YELLOW='\033[33m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
 TARGETS=(
   "x86_64-unknown-linux-gnu"
   "aarch64-unknown-linux-gnu"
   "x86_64-apple-darwin"
   "aarch64-apple-darwin"
 )
+
+asset_name_for_target() {
+  case "$1" in
+    x86_64-unknown-linux-gnu) echo "dbchat-linux-x86_64.tar.gz" ;;
+    aarch64-unknown-linux-gnu) echo "dbchat-linux-aarch64.tar.gz" ;;
+    x86_64-apple-darwin) echo "dbchat-darwin-x86_64.tar.gz" ;;
+    aarch64-apple-darwin) echo "dbchat-darwin-aarch64.tar.gz" ;;
+    *) return 1 ;;
+  esac
+}
 
 echo "${DIM}Building dbchat v${VERSION} for:${NC}"
 for target in "${TARGETS[@]}"; do
@@ -20,6 +36,7 @@ done
 echo ""
 
 mkdir -p "$DIST_DIR"
+: > "$DIST_DIR/SHA256SUMS"
 
 for target in "${TARGETS[@]}"; do
   echo "${CYAN}Building${NC} $target ..."
@@ -34,9 +51,7 @@ for target in "${TARGETS[@]}"; do
     continue
   fi
 
-  OS_ARCH="${target//unknown-/}"
-  OS_ARCH="${OS_ARCH//-gnu/}"
-  ARCHIVE="dbchat-${OS_ARCH}.tar.gz"
+  ARCHIVE="$(asset_name_for_target "$target")"
 
   TMPDIR=$(mktemp -d)
   cp "$BIN" "$TMPDIR/dbchat"

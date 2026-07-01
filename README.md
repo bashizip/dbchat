@@ -37,7 +37,7 @@ curl -sSfL https://raw.githubusercontent.com/bashizip/dbchat/main/scripts/instal
 ### Via cargo
 
 ```bash
-cargo install --path .
+cargo install --path dbchat-cli
 ```
 
 ## Utilisation

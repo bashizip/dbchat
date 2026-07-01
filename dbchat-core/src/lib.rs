@@ -23,12 +23,8 @@ pub struct DbChat {
 
 impl DbChat {
     pub async fn connect(config: AppConfig) -> Result<Self> {
-        let db = DbConnector::connect(
-            &config.db.engine,
-            &config.db.uri,
-            config.db.max_connections,
-        )
-        .await?;
+        let db = DbConnector::connect(&config.db.engine, &config.db.uri, config.db.max_connections)
+            .await?;
 
         let schema = db.introspect_schema().await?;
         let mut llm = LlmClient::new(config.llm.clone());
@@ -68,27 +64,34 @@ impl DbChat {
             return Ok(ChatResponse::Info(msg.to_string()));
         }
 
-        if self.config.db.safe_mode && is_destructive(&generation.sql) {
-            return Ok(ChatResponse::ConfirmDestructive(generation.sql.clone()));
+        if is_destructive(&generation.sql) {
+            if self.config.db.read_only {
+                return Err(DbChatError::DestructiveQuery);
+            }
+            if self.config.db.safe_mode {
+                return Ok(ChatResponse::ConfirmDestructive(generation.sql.clone()));
+            }
         }
+
+        let sql = apply_select_limit(&generation.sql, self.config.db.max_rows);
 
         let start = std::time::Instant::now();
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(self.config.db.query_timeout_secs),
-            self.db.execute_raw(&generation.sql),
+            self.db.execute_raw(&sql),
         )
         .await
         .map_err(|_| DbChatError::Timeout(self.config.db.query_timeout_secs))?
         .map_err(|e| {
             let err_str = e.to_string();
-            let _future = self.llm.explain_error(&generation.sql, &err_str, question);
+            let _future = self.llm.explain_error(&sql, &err_str, question);
             e
         })?;
 
         let elapsed = start.elapsed();
 
         Ok(ChatResponse::Result {
-            sql: generation.sql,
+            sql,
             result,
             elapsed,
         })
@@ -127,4 +130,51 @@ fn is_destructive(sql: &str) -> bool {
         || upper.starts_with("ALTER")
         || upper.starts_with("CREATE")
         || upper.starts_with("REPLACE")
+}
+
+fn apply_select_limit(sql: &str, max_rows: u64) -> String {
+    let trimmed = sql.trim().trim_end_matches(';').trim();
+    if max_rows == 0 || !is_select_like(trimmed) || has_limit_clause(trimmed) {
+        return trimmed.to_string();
+    }
+    format!("{trimmed} LIMIT {max_rows}")
+}
+
+fn is_select_like(sql: &str) -> bool {
+    let upper = sql.trim_start().to_uppercase();
+    upper.starts_with("SELECT") || upper.starts_with("WITH")
+}
+
+fn has_limit_clause(sql: &str) -> bool {
+    sql.split_whitespace()
+        .any(|token| token.eq_ignore_ascii_case("LIMIT"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn appends_limit_to_selects_without_limit() {
+        assert_eq!(
+            apply_select_limit("SELECT * FROM users;", 50),
+            "SELECT * FROM users LIMIT 50"
+        );
+    }
+
+    #[test]
+    fn keeps_existing_limit() {
+        assert_eq!(
+            apply_select_limit("SELECT * FROM users LIMIT 10", 50),
+            "SELECT * FROM users LIMIT 10"
+        );
+    }
+
+    #[test]
+    fn does_not_limit_modifying_sql() {
+        assert_eq!(
+            apply_select_limit("UPDATE users SET name = 'x'", 50),
+            "UPDATE users SET name = 'x'"
+        );
+    }
 }

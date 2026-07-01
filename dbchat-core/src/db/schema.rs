@@ -1,7 +1,7 @@
 use sqlx::{Column, Row};
 
-use crate::error::Result;
 use crate::db::connector::DbConnector;
+use crate::error::Result;
 
 #[derive(Debug, Clone)]
 pub struct ColumnInfo {
@@ -44,7 +44,8 @@ impl SchemaInfo {
                 let nullable = if col.is_nullable { "" } else { " NOT NULL" };
                 ctx.push_str(&format!(
                     "      - {name} {ty}{nullable}{pk}{fk}\n",
-                    name = col.name, ty = col.data_type,
+                    name = col.name,
+                    ty = col.data_type,
                 ));
             }
             if let Some(count) = table.row_count {
@@ -175,7 +176,12 @@ async fn introspect_postgres_schema(pool: &sqlx::Pool<sqlx::Postgres>) -> Result
         let columns = introspect_postgres_columns(pool, &table_name).await?;
         let row_count = get_row_count_postgres(pool, &table_name).await;
         let sample_rows = get_sample_data_postgres(pool, &table_name, &columns).await;
-        tables.push(TableInfo { name: table_name, columns, row_count, sample_rows });
+        tables.push(TableInfo {
+            name: table_name,
+            columns,
+            row_count,
+            sample_rows,
+        });
     }
     Ok(SchemaInfo { tables })
 }
@@ -221,7 +227,12 @@ async fn introspect_postgres_columns(
 
 async fn get_row_count_postgres(pool: &sqlx::Pool<sqlx::Postgres>, table: &str) -> Option<u64> {
     let q = format!("SELECT COUNT(*) FROM \"{table}\"");
-    sqlx::query_scalar::<_, i64>(&q).fetch_optional(pool).await.ok().flatten().map(|c| c as u64)
+    sqlx::query_scalar::<_, i64>(&q)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .map(|c| c as u64)
 }
 
 async fn get_sample_data_postgres(
@@ -229,7 +240,9 @@ async fn get_sample_data_postgres(
     table: &str,
     columns: &[ColumnInfo],
 ) -> Vec<Vec<serde_json::Value>> {
-    if columns.is_empty() { return vec![]; }
+    if columns.is_empty() {
+        return vec![];
+    }
     let col_names: Vec<String> = columns.iter().map(|c| format!("\"{}\"", c.name)).collect();
     let q = format!("SELECT {} FROM \"{}\" LIMIT 3", col_names.join(", "), table);
     if let Ok(rows) = sqlx::query(&q).fetch_all(pool).await {
@@ -257,7 +270,12 @@ async fn introspect_mysql_schema(pool: &sqlx::Pool<sqlx::MySql>) -> Result<Schem
         let columns = introspect_mysql_columns(pool, &table_name).await?;
         let row_count = get_row_count_mysql(pool, &table_name).await;
         let sample_rows = get_sample_data_mysql(pool, &table_name, &columns).await;
-        tables.push(TableInfo { name: table_name, columns, row_count, sample_rows });
+        tables.push(TableInfo {
+            name: table_name,
+            columns,
+            row_count,
+            sample_rows,
+        });
     }
     Ok(SchemaInfo { tables })
 }
@@ -304,7 +322,12 @@ async fn introspect_mysql_columns(
 
 async fn get_row_count_mysql(pool: &sqlx::Pool<sqlx::MySql>, table: &str) -> Option<u64> {
     let q = format!("SELECT COUNT(*) FROM `{table}`");
-    sqlx::query_scalar::<_, i64>(&q).fetch_optional(pool).await.ok().flatten().map(|c| c as u64)
+    sqlx::query_scalar::<_, i64>(&q)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .map(|c| c as u64)
 }
 
 async fn get_sample_data_mysql(
@@ -312,7 +335,9 @@ async fn get_sample_data_mysql(
     table: &str,
     columns: &[ColumnInfo],
 ) -> Vec<Vec<serde_json::Value>> {
-    if columns.is_empty() { return vec![]; }
+    if columns.is_empty() {
+        return vec![];
+    }
     let col_names: Vec<String> = columns.iter().map(|c| format!("`{}`", c.name)).collect();
     let q = format!("SELECT {} FROM `{}` LIMIT 3", col_names.join(", "), table);
     if let Ok(rows) = sqlx::query(&q).fetch_all(pool).await {
@@ -338,7 +363,12 @@ async fn introspect_sqlite_schema(pool: &sqlx::Pool<sqlx::Sqlite>) -> Result<Sch
         let columns = introspect_sqlite_columns(pool, &table_name).await?;
         let row_count = get_row_count_sqlite(pool, &table_name).await;
         let sample_rows = get_sample_data_sqlite(pool, &table_name, &columns).await;
-        tables.push(TableInfo { name: table_name, columns, row_count, sample_rows });
+        tables.push(TableInfo {
+            name: table_name,
+            columns,
+            row_count,
+            sample_rows,
+        });
     }
     Ok(SchemaInfo { tables })
 }
@@ -367,7 +397,12 @@ async fn introspect_sqlite_columns(
 
 async fn get_row_count_sqlite(pool: &sqlx::Pool<sqlx::Sqlite>, table: &str) -> Option<u64> {
     let q = format!("SELECT COUNT(*) FROM \"{table}\"");
-    sqlx::query_scalar::<_, i64>(&q).fetch_optional(pool).await.ok().flatten().map(|c| c as u64)
+    sqlx::query_scalar::<_, i64>(&q)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .map(|c| c as u64)
 }
 
 async fn get_sample_data_sqlite(
@@ -375,7 +410,9 @@ async fn get_sample_data_sqlite(
     table: &str,
     columns: &[ColumnInfo],
 ) -> Vec<Vec<serde_json::Value>> {
-    if columns.is_empty() { return vec![]; }
+    if columns.is_empty() {
+        return vec![];
+    }
     let col_names: Vec<String> = columns.iter().map(|c| format!("\"{}\"", c.name)).collect();
     let q = format!("SELECT {} FROM \"{}\" LIMIT 3", col_names.join(", "), table);
     if let Ok(rows) = sqlx::query(&q).fetch_all(pool).await {

@@ -43,7 +43,10 @@ pub async fn run_repl(dbchat: &mut dbchat_core::DbChat) -> color_eyre::Result<()
                 }
             }
             Err(rustyline::error::ReadlineError::Interrupted) => {
-                println!("\x1b[2m{}\x1b[0m", loc.t("Tapez /exit pour quitter", "Type /exit to quit"));
+                println!(
+                    "\x1b[2m{}\x1b[0m",
+                    loc.t("Tapez /exit pour quitter", "Type /exit to quit")
+                );
             }
             Err(rustyline::error::ReadlineError::Eof) => break,
             Err(err) => {
@@ -81,9 +84,15 @@ async fn handle_command(
             render::print_bold(loc.t("Tables disponibles:", "Available tables:"));
             for table in &dbchat.schema.tables {
                 let col_count = table.columns.len();
-                let row_info = table.row_count.map(|c| format!(" ({c})")).unwrap_or_default();
+                let row_info = table
+                    .row_count
+                    .map(|c| format!(" ({c})"))
+                    .unwrap_or_default();
                 let col_label = loc.t("colonnes", "cols");
-                println!("  \x1b[36m{}\x1b[0m {col_count} {col_label}{row_info}", table.name);
+                println!(
+                    "  \x1b[36m{}\x1b[0m {col_count} {col_label}{row_info}",
+                    table.name
+                );
             }
         }
 
@@ -92,11 +101,15 @@ async fn handle_command(
                 render::print_bold(&format!("{} {}", loc.t("Table:", "Table:"), table.name));
                 for col in &table.columns {
                     let mut flags = String::new();
-                    if col.is_primary_key { flags.push_str(" PK"); }
+                    if col.is_primary_key {
+                        flags.push_str(" PK");
+                    }
                     if let Some((ref ft, ref fc)) = col.fk_ref {
                         flags.push_str(&format!(" FK->{ft}.{fc}"));
                     }
-                    if col.is_nullable { flags.push_str(" NULL"); }
+                    if col.is_nullable {
+                        flags.push_str(" NULL");
+                    }
                     println!(
                         "  \x1b[32m{}\x1b[0m \x1b[2m{}\x1b[0m \x1b[33m{flags}\x1b[0m",
                         col.name, col.data_type
@@ -111,7 +124,10 @@ async fn handle_command(
         }
 
         "/refresh" => {
-            println!("\x1b[34m{}\x1b[0m", loc.t("Scanning schema...", "Scanning schema..."));
+            println!(
+                "\x1b[34m{}\x1b[0m",
+                loc.t("Scanning schema...", "Scanning schema...")
+            );
             match dbchat.refresh_schema().await {
                 Ok(()) => render::print_green(loc.t("Schema updated", "Schema updated")),
                 Err(e) => render::render_error(&e),
@@ -125,7 +141,11 @@ async fn handle_command(
 
         "/verbose" => {
             let on = dbchat.toggle_verbose();
-            let msg = if on { loc.t("Verbose ON", "Verbose ON") } else { loc.t("Verbose OFF", "Verbose OFF") };
+            let msg = if on {
+                loc.t("Verbose ON", "Verbose ON")
+            } else {
+                loc.t("Verbose OFF", "Verbose OFF")
+            };
             render::print_green(msg);
         }
 
@@ -143,7 +163,8 @@ async fn handle_command(
         "/config" => {
             let path = dbchat_core::AppConfig::config_path();
             println!("\x1b[1mConfig:\x1b[0m \x1b[36m{}\x1b[0m", path.display());
-            println!("  {} \x1b[35m{}\x1b[0m",
+            println!(
+                "  {} \x1b[35m{}\x1b[0m",
                 loc.t("Provider:", "Provider:"),
                 match dbchat.config.llm.provider {
                     dbchat_core::config::LlmProvider::OpenAI => "OpenAI",
@@ -152,12 +173,23 @@ async fn handle_command(
                     dbchat_core::config::LlmProvider::Google => "Google",
                 }
             );
-            println!("  {} \x1b[35m{}\x1b[0m", loc.t("Model:", "Model:"), dbchat.config.llm.model);
-            println!("  {} \x1b[35m{}\x1b[0m", loc.t("Verbose:", "Verbose:"), dbchat.verbose);
+            println!(
+                "  {} \x1b[35m{}\x1b[0m",
+                loc.t("Model:", "Model:"),
+                dbchat.config.llm.model
+            );
+            println!(
+                "  {} \x1b[35m{}\x1b[0m",
+                loc.t("Verbose:", "Verbose:"),
+                dbchat.verbose
+            );
         }
 
         _ => {
-            render::print_red(&format!("{}: {command}", loc.t("Unknown command", "Unknown command")));
+            render::print_red(&format!(
+                "{}: {command}",
+                loc.t("Unknown command", "Unknown command")
+            ));
             println!("  {}", loc.t(
                 "Commands: /help, /tables, /schema, /exit, /clear, /refresh, /context, /verbose, /history, /config",
                 "Commands: /help, /tables, /schema, /exit, /clear, /refresh, /context, /verbose, /history, /config",
