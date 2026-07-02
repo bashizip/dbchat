@@ -86,9 +86,10 @@ impl DbConnector {
                 Ok(DbConnector::Postgres(pool))
             }
             DbEngine::Mysql => {
+                let uri = ensure_mysql_utf8(uri);
                 let pool = MySqlPoolOptions::new()
                     .max_connections(max_connections)
-                    .connect(uri)
+                    .connect(&uri)
                     .await
                     .map_err(|e| DbChatError::Connection(format!("MySQL: {e}")))?;
                 Ok(DbConnector::MySql(pool))
@@ -231,5 +232,52 @@ impl QueryExecResult {
             QueryExecResult::Select { values, .. } => values.clone(),
             QueryExecResult::Modify { .. } => vec![],
         }
+    }
+}
+
+fn ensure_mysql_utf8(uri: &str) -> String {
+    if uri.contains("charset=") {
+        uri.to_string()
+    } else if uri.contains('?') {
+        format!("{uri}&charset=utf8mb4")
+    } else {
+        format!("{uri}?charset=utf8mb4")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn appends_charset_to_mysql_uri() {
+        assert_eq!(
+            ensure_mysql_utf8("mysql://user:pass@localhost/db"),
+            "mysql://user:pass@localhost/db?charset=utf8mb4"
+        );
+    }
+
+    #[test]
+    fn appends_charset_to_uri_with_existing_params() {
+        assert_eq!(
+            ensure_mysql_utf8("mysql://user:pass@localhost/db?connect_timeout=10"),
+            "mysql://user:pass@localhost/db?connect_timeout=10&charset=utf8mb4"
+        );
+    }
+
+    #[test]
+    fn does_not_duplicate_charset() {
+        assert_eq!(
+            ensure_mysql_utf8("mysql://user:pass@localhost/db?charset=utf8"),
+            "mysql://user:pass@localhost/db?charset=utf8"
+        );
+    }
+
+    #[test]
+    fn adds_charset_to_any_uri_without_one() {
+        assert_eq!(
+            ensure_mysql_utf8("mysql://user:pass@localhost/db"),
+            "mysql://user:pass@localhost/db?charset=utf8mb4"
+        );
     }
 }
