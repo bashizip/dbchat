@@ -81,10 +81,10 @@ Fichier : `~/.config/dbchat/config.toml`
 
 ```toml
 [llm]
-provider = "google"            # google | openai | anthropic | ollama | openai-compatible
-model = "gemini-3.1-flash-lite"
-api_key = "env:GOOGLE_API_KEY" # ou une cle directe
-# api_url = "https://api.deepseek.com" # requis pour openai-compatible / OpenRouter
+provider = "openai-compatible" # openai-compatible | google | openai | anthropic | ollama
+model = "deepseek-v4-flash-free"
+api_key = "env:OPENCODE_API_KEY"
+api_url = "https://opencode.ai/zen/v1/chat/completions"
 
 [db]
 engine = "Postgres"
@@ -121,8 +121,25 @@ dbchat config
 Le wizard configure automatiquement le provider, le modèle, l'URL API si besoin,
 et la variable d'environnement à utiliser pour la clé.
 
+Par défaut, dbchat utilise OpenCode Zen avec le modèle gratuit
+`deepseek-v4-flash-free`. Pour l'activer :
+
+1. Connectez-vous à OpenCode Zen.
+2. Copiez votre API key Zen.
+3. Exportez-la dans votre shell :
+
+```bash
+export OPENCODE_API_KEY="votre_cle"
+```
+
+Alternative : collez la clé dans `dbchat config`. dbchat la stockera dans le
+fichier utilisateur `~/.config/dbchat/.env` (`600` sur Unix) et gardera seulement
+`api_key = "env:OPENCODE_API_KEY"` dans `config.toml`. Ce `.env` est global à
+dbchat; dbchat ne charge pas les fichiers `.env` des projets courants.
+
 | Choix | Modèle | Clé |
 |-------|--------|-----|
+| Gratuit recommandé | `deepseek-v4-flash-free` via OpenCode Zen | `OPENCODE_API_KEY` |
 | Gratuit / free tier | `gemini-3.1-flash-lite` | `GOOGLE_API_KEY` |
 | Gratuit OpenRouter | `openrouter/free` | `OPENROUTER_API_KEY` |
 | Gratuit OpenRouter | `google/gemma-4-31b-it:free` | `OPENROUTER_API_KEY` |
@@ -132,13 +149,18 @@ et la variable d'environnement à utiliser pour la clé.
 | Payant courant | `claude-haiku-4-5`, `claude-sonnet-5` | `ANTHROPIC_API_KEY` |
 | Payant courant | `gemini-3.5-flash` | `GOOGLE_API_KEY` |
 
-Exemple gratuit :
+OpenCode Zen indique que le modèle gratuit est disponible pour une durée limitée
+et que les données envoyées au modèle gratuit peuvent être utilisées pour
+améliorer le modèle pendant cette période.
+
+Exemple par défaut :
 
 ```toml
 [llm]
-provider = "google"
-model = "gemini-3.1-flash-lite"
-api_key = "env:GOOGLE_API_KEY"
+provider = "openai-compatible"
+model = "deepseek-v4-flash-free"
+api_url = "https://opencode.ai/zen/v1/chat/completions"
+api_key = "env:OPENCODE_API_KEY"
 ```
 
 Exemple OpenRouter gratuit :

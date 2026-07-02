@@ -1,8 +1,15 @@
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, Input, Password, Select};
+use std::io::Write;
+use std::path::Path;
 
-use dbchat_core::config::{AppConfig, DbEngine, LlmProvider};
+use dbchat_core::config::{
+    AppConfig, DEFAULT_OPENCODE_API_KEY_ENV, DEFAULT_OPENCODE_ZEN_CHAT_COMPLETIONS_URL,
+    DEFAULT_OPENCODE_ZEN_MODEL, DbEngine, LlmProvider,
+};
 
+pub const OPENCODE_ZEN_CHAT_COMPLETIONS_URL: &str = DEFAULT_OPENCODE_ZEN_CHAT_COMPLETIONS_URL;
+pub const OPENCODE_ZEN_FREE_MODEL: &str = DEFAULT_OPENCODE_ZEN_MODEL;
 pub const DEEPSEEK_API_BASE_URL: &str = "https://api.deepseek.com";
 pub const DEEPSEEK_FLASH_MODEL: &str = "deepseek-v4-flash";
 pub const OPENROUTER_API_BASE_URL: &str = "https://openrouter.ai/api/v1";
@@ -20,7 +27,14 @@ struct LlmPreset {
 
 const FREE_LLM_PRESETS: &[LlmPreset] = &[
     LlmPreset {
-        label: "Gemini Flash-Lite (free tier, Recommended)",
+        label: "OpenCode Zen DeepSeek V4 Flash Free (Recommended)",
+        provider: LlmProvider::OpenAICompatible,
+        model: OPENCODE_ZEN_FREE_MODEL,
+        api_url: Some(OPENCODE_ZEN_CHAT_COMPLETIONS_URL),
+        api_key_env: DEFAULT_OPENCODE_API_KEY_ENV,
+    },
+    LlmPreset {
+        label: "Gemini Flash-Lite (free tier)",
         provider: LlmProvider::Google,
         model: GEMINI_FLASH_LITE_MODEL,
         api_url: None,
@@ -249,7 +263,8 @@ fn configure_llm_preset(
     apply_llm_preset(config, &presets[selected]);
 
     let env_name = presets[selected].api_key_env;
-    println!("Cle API configuree via la variable d'environnement {env_name}");
+    println!("Par defaut, ce modele utilise la variable d'environnement {env_name}");
+    configure_api_key(theme, config, env_name)?;
 
     Ok(())
 }
@@ -302,12 +317,12 @@ fn configure_custom_llm(theme: &ColorfulTheme, config: &mut AppConfig) -> color_
                             .llm
                             .api_url
                             .clone()
-                            .unwrap_or_else(|| OPENROUTER_API_BASE_URL.to_string()),
+                            .unwrap_or_else(|| OPENCODE_ZEN_CHAT_COMPLETIONS_URL.to_string()),
                     )
                     .interact_text()?,
             );
-            config.llm.model = prompt_model(theme, &config.llm.model, OPENROUTER_FREE_MODEL)?;
-            configure_api_key(theme, config, "OPENAI_COMPATIBLE_API_KEY")?;
+            config.llm.model = prompt_model(theme, &config.llm.model, OPENCODE_ZEN_FREE_MODEL)?;
+            configure_api_key(theme, config, DEFAULT_OPENCODE_API_KEY_ENV)?;
         }
     }
 
@@ -362,7 +377,7 @@ fn configure_api_key(
 ) -> color_eyre::Result<()> {
     let choices = [
         "Utiliser une variable d'environnement",
-        "Stocker la cle dans config.toml",
+        "Stocker la cle dans le .env securise dbchat",
         "Effacer / ne pas configurer de cle",
     ];
     let default = match config.llm.api_key.as_deref() {
@@ -388,21 +403,133 @@ fn configure_api_key(
                 .with_prompt("Nom de la variable d'environnement")
                 .default(current.to_string())
                 .interact_text()?;
+            validate_env_name(&env_name)?;
             config.llm.api_key = Some(format!("env:{env_name}"));
         }
         1 => {
+            let env_name = config
+                .llm
+                .api_key
+                .as_deref()
+                .and_then(|value| value.strip_prefix("env:"))
+                .unwrap_or(default_env)
+                .to_string();
+            validate_env_name(&env_name)?;
             let key = Password::with_theme(theme)
                 .with_prompt("Cle API")
                 .allow_empty_password(true)
                 .interact()?;
             if !key.trim().is_empty() {
-                config.llm.api_key = Some(key);
+                write_secure_env_key(&env_name, &key)?;
+                config.llm.api_key = Some(format!("env:{env_name}"));
+                println!(
+                    "Cle stockee dans le fichier securise {}",
+                    AppConfig::env_path().display()
+                );
             }
         }
         _ => config.llm.api_key = None,
     }
 
     Ok(())
+}
+
+fn validate_env_name(name: &str) -> color_eyre::Result<()> {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return Err(color_eyre::eyre::eyre!(
+            "Le nom de variable d'environnement ne peut pas etre vide"
+        ));
+    };
+    if !(first == '_' || first.is_ascii_alphabetic()) {
+        return Err(color_eyre::eyre::eyre!("Nom de variable invalide: {name}"));
+    }
+    if !chars.all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+        return Err(color_eyre::eyre::eyre!("Nom de variable invalide: {name}"));
+    }
+    Ok(())
+}
+
+fn write_secure_env_key(name: &str, value: &str) -> color_eyre::Result<()> {
+    AppConfig::ensure_config_dir().map_err(|err| color_eyre::eyre::eyre!(err))?;
+    write_env_key(&AppConfig::env_path(), name, value)?;
+    Ok(())
+}
+
+fn write_env_key(path: &Path, name: &str, value: &str) -> color_eyre::Result<()> {
+    let new_line = format!("{name}={}", quote_dotenv_value(value));
+    let mut updated = false;
+    let mut lines = if path.exists() {
+        std::fs::read_to_string(path)?
+            .lines()
+            .map(|line| {
+                if dotenv_line_matches_key(line, name) {
+                    updated = true;
+                    new_line.clone()
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    if !updated {
+        lines.push(new_line);
+    }
+
+    write_private_file(path, &(lines.join("\n") + "\n"))?;
+    Ok(())
+}
+
+fn write_private_file(path: &Path, content: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(content.as_bytes())?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)?;
+        file.write_all(content.as_bytes())
+    }
+}
+
+fn dotenv_line_matches_key(line: &str, key: &str) -> bool {
+    let trimmed = line.trim_start();
+    let trimmed = trimmed.strip_prefix("export ").unwrap_or(trimmed);
+    trimmed
+        .split_once('=')
+        .map(|(name, _)| name.trim() == key)
+        .unwrap_or(false)
+}
+
+fn quote_dotenv_value(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r");
+    format!("\"{escaped}\"")
 }
 
 fn prompt_model(
@@ -461,6 +588,7 @@ mod tests {
     #[test]
     fn presets_include_simple_free_and_common_paid_models() {
         let free_models: Vec<&str> = FREE_LLM_PRESETS.iter().map(|preset| preset.model).collect();
+        assert_eq!(FREE_LLM_PRESETS[0].model, OPENCODE_ZEN_FREE_MODEL);
         assert!(free_models.contains(&GEMINI_FLASH_LITE_MODEL));
         assert!(free_models.contains(&OPENROUTER_FREE_MODEL));
         assert!(free_models.contains(&"google/gemma-4-31b-it:free"));
@@ -490,5 +618,78 @@ mod tests {
             config.llm.api_key.as_deref(),
             Some("env:OPENROUTER_API_KEY")
         );
+    }
+
+    #[test]
+    fn preset_sets_opencode_endpoint_and_env_api_key() {
+        let mut config = AppConfig::default();
+
+        apply_llm_preset(&mut config, &FREE_LLM_PRESETS[0]);
+
+        assert_eq!(config.llm.provider, LlmProvider::OpenAICompatible);
+        assert_eq!(config.llm.model, OPENCODE_ZEN_FREE_MODEL);
+        assert_eq!(
+            config.llm.api_url.as_deref(),
+            Some(OPENCODE_ZEN_CHAT_COMPLETIONS_URL)
+        );
+        assert_eq!(config.llm.api_key.as_deref(), Some("env:OPENCODE_API_KEY"));
+    }
+
+    #[test]
+    fn secure_env_writer_updates_key_without_dropping_others() -> color_eyre::Result<()> {
+        let dir = std::env::temp_dir().join(format!(
+            "dbchat-env-writer-{}-{}",
+            std::process::id(),
+            unique_test_suffix()
+        ));
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join(".env");
+        std::fs::write(
+            &path,
+            "KEEP=this-stays\nOPENCODE_API_KEY=\"old\"\n# comment\n",
+        )?;
+
+        write_env_key(&path, "OPENCODE_API_KEY", "new secret")?;
+
+        let content = std::fs::read_to_string(&path)?;
+        assert!(content.contains("KEEP=this-stays"));
+        assert!(content.contains("# comment"));
+        assert!(content.contains("OPENCODE_API_KEY=\"new secret\""));
+        assert!(!content.contains("old"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path)?.permissions().mode() & 0o777,
+                0o600
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn secure_env_writer_quotes_special_characters() -> color_eyre::Result<()> {
+        let dir = std::env::temp_dir().join(format!(
+            "dbchat-env-writer-quotes-{}-{}",
+            std::process::id(),
+            unique_test_suffix()
+        ));
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join(".env");
+
+        write_env_key(&path, "OPENCODE_API_KEY", "sk-\"quoted\"\\value")?;
+
+        let content = std::fs::read_to_string(&path)?;
+        assert_eq!(content, "OPENCODE_API_KEY=\"sk-\\\"quoted\\\"\\\\value\"\n");
+        Ok(())
+    }
+
+    fn unique_test_suffix() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     }
 }

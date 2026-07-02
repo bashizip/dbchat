@@ -432,6 +432,7 @@ dependencies = [
  "csv",
  "dbchat-core",
  "dialoguer",
+ "dotenvy",
  "rustyline",
  "serde_json",
  "tokio",

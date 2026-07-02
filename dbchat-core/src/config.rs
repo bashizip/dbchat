@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+pub const DEFAULT_OPENCODE_ZEN_CHAT_COMPLETIONS_URL: &str =
+    "https://opencode.ai/zen/v1/chat/completions";
+pub const DEFAULT_OPENCODE_ZEN_MODEL: &str = "deepseek-v4-flash-free";
+pub const DEFAULT_OPENCODE_API_KEY_ENV: &str = "OPENCODE_API_KEY";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DbEngine {
     Postgres,
@@ -73,11 +78,11 @@ pub struct LlmConfig {
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
-            provider: LlmProvider::Google,
-            model: String::from("gemini-3.1-flash-lite"),
+            provider: LlmProvider::OpenAICompatible,
+            model: String::from(DEFAULT_OPENCODE_ZEN_MODEL),
             temperature: 0.0,
-            api_key: Some(String::from("env:GOOGLE_API_KEY")),
-            api_url: None,
+            api_key: Some(format!("env:{DEFAULT_OPENCODE_API_KEY_ENV}")),
+            api_url: Some(String::from(DEFAULT_OPENCODE_ZEN_CHAT_COMPLETIONS_URL)),
         }
     }
 }
@@ -217,25 +222,33 @@ impl AppConfig {
 
     pub fn save(&self) -> Result<(), String> {
         let path = Self::config_path();
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
+        Self::ensure_config_dir()?;
         let content = toml::to_string_pretty(self).map_err(|e| e.to_string())?;
         std::fs::write(&path, content).map_err(|e| e.to_string())?;
         Ok(())
     }
 
-    pub fn config_path() -> PathBuf {
+    pub fn config_dir() -> PathBuf {
         if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
-            PathBuf::from(dir).join("dbchat").join("config.toml")
+            PathBuf::from(dir).join("dbchat")
         } else if let Some(home) = std::env::var("HOME").ok() {
-            PathBuf::from(home)
-                .join(".config")
-                .join("dbchat")
-                .join("config.toml")
+            PathBuf::from(home).join(".config").join("dbchat")
         } else {
-            PathBuf::from("./dbchat.toml")
+            PathBuf::from("./dbchat")
         }
+    }
+
+    pub fn config_path() -> PathBuf {
+        Self::config_dir().join("config.toml")
+    }
+
+    pub fn env_path() -> PathBuf {
+        Self::config_dir().join(".env")
+    }
+
+    pub fn ensure_config_dir() -> Result<(), String> {
+        let dir = Self::config_dir();
+        ensure_private_dir(&dir).map_err(|e| e.to_string())
     }
 
     pub fn resolve_llm_api_key(&mut self) {
@@ -253,7 +266,9 @@ impl AppConfig {
             LlmProvider::Google => std::env::var("GOOGLE_API_KEY").ok(),
             LlmProvider::OpenAICompatible => {
                 let api_url = self.llm.api_url.as_deref().unwrap_or_default();
-                if api_url.contains("openrouter.ai") {
+                if api_url.contains("opencode.ai") {
+                    std::env::var(DEFAULT_OPENCODE_API_KEY_ENV).ok()
+                } else if api_url.contains("openrouter.ai") {
                     std::env::var("OPENROUTER_API_KEY").ok()
                 } else if api_url.contains("deepseek.com") {
                     std::env::var("DEEPSEEK_API_KEY").ok()
@@ -262,6 +277,46 @@ impl AppConfig {
                 }
             }
         };
+    }
+
+    pub fn llm_api_key_env(&self) -> Option<&'static str> {
+        match self.llm.provider {
+            LlmProvider::OpenAI => Some("OPENAI_API_KEY"),
+            LlmProvider::Anthropic => Some("ANTHROPIC_API_KEY"),
+            LlmProvider::Ollama => None,
+            LlmProvider::Google => Some("GOOGLE_API_KEY"),
+            LlmProvider::OpenAICompatible => {
+                let api_url = self.llm.api_url.as_deref().unwrap_or_default();
+                if api_url.contains("opencode.ai") {
+                    Some(DEFAULT_OPENCODE_API_KEY_ENV)
+                } else if api_url.contains("openrouter.ai") {
+                    Some("OPENROUTER_API_KEY")
+                } else if api_url.contains("deepseek.com") {
+                    Some("DEEPSEEK_API_KEY")
+                } else {
+                    Some("OPENAI_COMPATIBLE_API_KEY")
+                }
+            }
+        }
+    }
+}
+
+fn ensure_private_dir(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        builder.mode(0o700);
+        builder.create(path)?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(path)
     }
 }
 
@@ -305,6 +360,28 @@ mod tests {
         assert!(!config.has_database_uri());
         config.db.uri = "mysql://user:pass@localhost/db".to_string();
         assert!(config.has_database_uri());
+    }
+
+    #[test]
+    fn test_default_llm_uses_opencode_zen() {
+        let config = AppConfig::default();
+
+        assert_eq!(config.llm.provider, LlmProvider::OpenAICompatible);
+        assert_eq!(config.llm.model, DEFAULT_OPENCODE_ZEN_MODEL);
+        assert_eq!(
+            config.llm.api_url.as_deref(),
+            Some(DEFAULT_OPENCODE_ZEN_CHAT_COMPLETIONS_URL)
+        );
+        assert_eq!(config.llm.api_key.as_deref(), Some("env:OPENCODE_API_KEY"));
+        assert_eq!(config.llm_api_key_env(), Some(DEFAULT_OPENCODE_API_KEY_ENV));
+    }
+
+    #[test]
+    fn test_env_path_is_next_to_config_path() {
+        assert_eq!(
+            AppConfig::env_path(),
+            AppConfig::config_path().parent().unwrap().join(".env")
+        );
     }
 
     #[test]

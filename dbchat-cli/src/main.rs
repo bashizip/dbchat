@@ -39,7 +39,7 @@ struct Cli {
     #[arg(long)]
     model: Option<String>,
 
-    /// LLM provider (openai, anthropic, ollama, google, openrouter, deepseek, openai-compatible)
+    /// LLM provider (opencode, openrouter, deepseek, openai, anthropic, ollama, google, openai-compatible)
     #[arg(long)]
     provider: Option<String>,
 
@@ -74,6 +74,7 @@ enum ConfigAction {
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
     let cli = Cli::parse();
+    validate_secure_env_file()?;
 
     if let Some(DbCommand::Config { .. }) = &cli.command {
         return handle_config(&cli);
@@ -118,7 +119,7 @@ async fn main() -> color_eyre::Result<()> {
     if let Some(ref model) = cli.model {
         config.llm.model = model.clone();
     }
-    config.resolve_llm_api_key();
+    resolve_llm_api_key(&mut config)?;
 
     let locale = config.display.locale.clone();
     let uri = config.db.uri.clone();
@@ -175,9 +176,7 @@ fn handle_config(cli: &Cli) -> color_eyre::Result<()> {
     } else {
         let default = dbchat_core::AppConfig::default();
         let content = toml::to_string_pretty(&default).unwrap();
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
+        dbchat_core::AppConfig::ensure_config_dir().map_err(|err| color_eyre::eyre::eyre!(err))?;
         std::fs::write(&path, &content)?;
         println!("\x1b[32m✓\x1b[0m Created: {}", path.display());
         println!("\x1b[2m── Default config ──\x1b[0m");
@@ -289,6 +288,43 @@ mod tests {
     }
 
     #[test]
+    fn applies_opencode_provider_override_aliases() {
+        for provider in ["opencode", "zen", "opencode-zen"] {
+            let mut config = dbchat_core::AppConfig::default();
+            apply_provider_override(&mut config, provider).unwrap();
+
+            assert_eq!(
+                config.llm.provider,
+                dbchat_core::config::LlmProvider::OpenAICompatible
+            );
+            assert_eq!(config.llm.model, config_wizard::OPENCODE_ZEN_FREE_MODEL);
+            assert_eq!(
+                config.llm.api_url.as_deref(),
+                Some(config_wizard::OPENCODE_ZEN_CHAT_COMPLETIONS_URL)
+            );
+            assert_eq!(config.llm.api_key.as_deref(), Some("env:OPENCODE_API_KEY"));
+        }
+    }
+
+    #[test]
+    fn reads_secure_env_value_from_dotenv_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "dbchat-main-env-{}-{}",
+            std::process::id(),
+            unique_test_suffix()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(".env");
+        std::fs::write(&path, "OTHER=value\nOPENCODE_API_KEY=\"test secret\"\n").unwrap();
+
+        assert_eq!(
+            secure_env_value_from_path(&path, "OPENCODE_API_KEY").unwrap(),
+            Some("test secret".to_string())
+        );
+        assert_eq!(secure_env_value_from_path(&path, "MISSING").unwrap(), None);
+    }
+
+    #[test]
     fn standard_provider_override_clears_custom_endpoint() {
         let mut config = dbchat_core::AppConfig::default();
         config.llm.provider = dbchat_core::config::LlmProvider::OpenAICompatible;
@@ -355,6 +391,12 @@ fn apply_provider_override(
         "openai-compatible" | "openai_compatible" | "compatible" => {
             dbchat_core::config::LlmProvider::OpenAICompatible
         }
+        "opencode" | "zen" | "opencode-zen" => {
+            config.llm.api_url = Some(config_wizard::OPENCODE_ZEN_CHAT_COMPLETIONS_URL.to_string());
+            config.llm.model = config_wizard::OPENCODE_ZEN_FREE_MODEL.to_string();
+            config.llm.api_key = Some("env:OPENCODE_API_KEY".to_string());
+            dbchat_core::config::LlmProvider::OpenAICompatible
+        }
         "openrouter" | "openrouter-free" => {
             config.llm.api_url = Some(config_wizard::OPENROUTER_API_BASE_URL.to_string());
             config.llm.model = config_wizard::OPENROUTER_FREE_MODEL.to_string();
@@ -369,9 +411,75 @@ fn apply_provider_override(
         }
         _ => {
             return Err(color_eyre::eyre::eyre!(
-                "Provider inconnu : {provider} (openai, anthropic, ollama, google, openrouter, deepseek, openai-compatible)"
+                "Provider inconnu : {provider} (opencode, openrouter, deepseek, openai, anthropic, ollama, google, openai-compatible)"
             ));
         }
     };
     Ok(())
+}
+
+fn validate_secure_env_file() -> color_eyre::Result<()> {
+    let path = dbchat_core::AppConfig::env_path();
+    if path.exists() {
+        for item in dotenvy::from_path_iter(&path)
+            .map_err(|err| color_eyre::eyre::eyre!("Invalid {}: {err}", path.display()))?
+        {
+            item.map_err(|err| color_eyre::eyre::eyre!("Invalid {}: {err}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn resolve_llm_api_key(config: &mut dbchat_core::AppConfig) -> color_eyre::Result<()> {
+    let configured_env = configured_llm_api_key_env(config);
+    config.resolve_llm_api_key();
+
+    if config.llm.api_key.is_none() {
+        if let Some(env_name) = configured_env {
+            config.llm.api_key = secure_env_value(&env_name)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn configured_llm_api_key_env(config: &dbchat_core::AppConfig) -> Option<String> {
+    config
+        .llm
+        .api_key
+        .as_deref()
+        .and_then(|value| value.strip_prefix("env:").map(str::to_string))
+        .or_else(|| config.llm_api_key_env().map(str::to_string))
+}
+
+fn secure_env_value(name: &str) -> color_eyre::Result<Option<String>> {
+    secure_env_value_from_path(&dbchat_core::AppConfig::env_path(), name)
+}
+
+fn secure_env_value_from_path(
+    path: &std::path::Path,
+    name: &str,
+) -> color_eyre::Result<Option<String>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let iter = dotenvy::from_path_iter(path)
+        .map_err(|err| color_eyre::eyre::eyre!("Invalid {}: {err}", path.display()))?;
+    for item in iter {
+        let (key, value) =
+            item.map_err(|err| color_eyre::eyre::eyre!("Invalid {}: {err}", path.display()))?;
+        if key == name {
+            return Ok(Some(value));
+        }
+    }
+    Ok(None)
+}
+
+#[cfg(test)]
+fn unique_test_suffix() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
 }

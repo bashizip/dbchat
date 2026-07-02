@@ -375,6 +375,10 @@ mod tests {
             openai_compatible_chat_url("https://example.com/v1/chat/completions"),
             "https://example.com/v1/chat/completions"
         );
+        assert_eq!(
+            openai_compatible_chat_url("https://opencode.ai/zen/v1/chat/completions"),
+            "https://opencode.ai/zen/v1/chat/completions"
+        );
     }
 
     #[test]
