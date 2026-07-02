@@ -272,49 +272,52 @@ fn extract_content(json_str: &str) -> String {
     };
 
     // OpenAI / Ollama format
-    if let Some(choices) = v.get("choices") {
-        if let Some(choice) = choices.get(0) {
-            if let Some(msg) = choice.get("message") {
-                if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
-                    return content.to_string();
-                }
-            }
-        }
+    if let Some(content) = v
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|choice| choice.get("message"))
+        .and_then(|msg| msg.get("content"))
+        .and_then(|content| content.as_str())
+    {
+        return content.to_string();
     }
 
     // Anthropic format
-    if let Some(content_blocks) = v.get("content") {
-        if let Some(block) = content_blocks.get(0) {
-            if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                return text.to_string();
-            }
-        }
+    if let Some(text) = v
+        .get("content")
+        .and_then(|content_blocks| content_blocks.get(0))
+        .and_then(|block| block.get("text"))
+        .and_then(|text| text.as_str())
+    {
+        return text.to_string();
     }
 
     // Gemini generateContent format
-    if let Some(candidates) = v.get("candidates").and_then(|c| c.as_array()) {
-        if let Some(parts) = candidates
-            .first()
-            .and_then(|candidate| candidate.get("content"))
-            .and_then(|content| content.get("parts"))
-            .and_then(|parts| parts.as_array())
-        {
-            let text = parts
-                .iter()
-                .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
-                .collect::<Vec<_>>()
-                .join("\n");
-            if !text.is_empty() {
-                return text;
-            }
+    if let Some(parts) = v
+        .get("candidates")
+        .and_then(|candidates| candidates.as_array())
+        .and_then(|candidates| candidates.first())
+        .and_then(|candidate| candidate.get("content"))
+        .and_then(|content| content.get("parts"))
+        .and_then(|parts| parts.as_array())
+    {
+        let text = parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !text.is_empty() {
+            return text;
         }
     }
 
     // Ollama chat format
-    if let Some(msg) = v.get("message") {
-        if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
-            return content.to_string();
-        }
+    if let Some(content) = v
+        .get("message")
+        .and_then(|msg| msg.get("content"))
+        .and_then(|content| content.as_str())
+    {
+        return content.to_string();
     }
 
     // Fallback: try to find any content field
@@ -395,10 +398,12 @@ mod tests {
 
     #[test]
     fn builds_google_generate_content_body() {
-        let mut config = LlmConfig::default();
-        config.provider = LlmProvider::Google;
-        config.model = "gemini-3.1-flash-lite".to_string();
-        config.temperature = 0.2;
+        let config = LlmConfig {
+            provider: LlmProvider::Google,
+            model: "gemini-3.1-flash-lite".to_string(),
+            temperature: 0.2,
+            ..Default::default()
+        };
         let client = LlmClient::new(config);
 
         let body = client.build_chat_body("system prompt", "user prompt");

@@ -61,7 +61,7 @@ fn render_csv(response: &ChatResponse) {
                 return;
             }
             let mut wtr = csv::Writer::from_writer(std::io::stdout());
-            let _ = wtr.write_record(&result.columns());
+            let _ = wtr.write_record(result.columns());
             for row in result.values() {
                 let record: Vec<String> = row
                     .iter()
@@ -91,9 +91,6 @@ fn render_table_default(response: &ChatResponse, locale: &Locale) {
             result,
             elapsed,
         } => {
-            if locale.t("", "") == "" {
-                // always show SQL
-            }
             if result.is_select() {
                 let columns = result.columns();
                 let values = result.values();

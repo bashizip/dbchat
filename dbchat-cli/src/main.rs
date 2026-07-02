@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 mod config_wizard;
 mod render;
 mod repl;
+mod ui;
 
 #[derive(Parser)]
 #[command(name = "dbchat")]
@@ -229,6 +230,148 @@ pub(crate) fn redact_config_content(content: &str) -> String {
         .join("\n")
 }
 
+fn resolve_uri(cli: &Cli) -> Result<Option<String>, color_eyre::eyre::Error> {
+    if let Some(uri) = &cli.connection_string {
+        return Ok(Some(uri.clone()));
+    }
+
+    if let Some(ref cmd) = cli.command {
+        return match cmd {
+            DbCommand::Postgres { uri } => Ok(Some(uri.clone())),
+            DbCommand::Mysql { uri } => Ok(Some(uri.clone())),
+            DbCommand::Sqlite { path } => Ok(Some(format!("sqlite://{path}"))),
+            DbCommand::Config { .. } => unreachable!(),
+        };
+    }
+
+    Ok(None)
+}
+
+fn apply_provider_override(
+    config: &mut dbchat_core::AppConfig,
+    provider: &str,
+) -> Result<(), color_eyre::eyre::Error> {
+    config.llm.provider = match provider.to_lowercase().as_str() {
+        "openai" => {
+            config.llm.api_url = None;
+            config.llm.api_key = None;
+            config.llm.model = "gpt-5.4-mini".to_string();
+            dbchat_core::config::LlmProvider::OpenAI
+        }
+        "anthropic" => {
+            config.llm.api_url = None;
+            config.llm.api_key = None;
+            config.llm.model = "claude-haiku-4-5".to_string();
+            dbchat_core::config::LlmProvider::Anthropic
+        }
+        "ollama" => {
+            config.llm.api_url = None;
+            config.llm.api_key = None;
+            config.llm.model = "llama3".to_string();
+            dbchat_core::config::LlmProvider::Ollama
+        }
+        "google" => {
+            config.llm.api_url = None;
+            config.llm.api_key = None;
+            config.llm.model = config_wizard::GEMINI_FLASH_LITE_MODEL.to_string();
+            dbchat_core::config::LlmProvider::Google
+        }
+        "openai-compatible" | "openai_compatible" | "compatible" => {
+            dbchat_core::config::LlmProvider::OpenAICompatible
+        }
+        "opencode" | "zen" | "opencode-zen" => {
+            config.llm.api_url = Some(config_wizard::OPENCODE_ZEN_CHAT_COMPLETIONS_URL.to_string());
+            config.llm.model = config_wizard::OPENCODE_ZEN_FREE_MODEL.to_string();
+            config.llm.api_key = Some("env:OPENCODE_API_KEY".to_string());
+            dbchat_core::config::LlmProvider::OpenAICompatible
+        }
+        "openrouter" | "openrouter-free" => {
+            config.llm.api_url = Some(config_wizard::OPENROUTER_API_BASE_URL.to_string());
+            config.llm.model = config_wizard::OPENROUTER_FREE_MODEL.to_string();
+            config.llm.api_key = Some("env:OPENROUTER_API_KEY".to_string());
+            dbchat_core::config::LlmProvider::OpenAICompatible
+        }
+        "deepseek" | "deepseek-flash" | "deepseek-flash-free" | "deepseek-v4-flash" => {
+            config.llm.api_url = Some(config_wizard::DEEPSEEK_API_BASE_URL.to_string());
+            config.llm.model = config_wizard::DEEPSEEK_FLASH_MODEL.to_string();
+            config.llm.api_key = Some("env:DEEPSEEK_API_KEY".to_string());
+            dbchat_core::config::LlmProvider::OpenAICompatible
+        }
+        _ => {
+            return Err(color_eyre::eyre::eyre!(
+                "Provider inconnu : {provider} (opencode, openrouter, deepseek, openai, anthropic, ollama, google, openai-compatible)"
+            ));
+        }
+    };
+    Ok(())
+}
+
+fn validate_secure_env_file() -> color_eyre::Result<()> {
+    let path = dbchat_core::AppConfig::env_path();
+    if path.exists() {
+        for item in dotenvy::from_path_iter(&path)
+            .map_err(|err| color_eyre::eyre::eyre!("Invalid {}: {err}", path.display()))?
+        {
+            item.map_err(|err| color_eyre::eyre::eyre!("Invalid {}: {err}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn resolve_llm_api_key(config: &mut dbchat_core::AppConfig) -> color_eyre::Result<()> {
+    let configured_env = configured_llm_api_key_env(config);
+    config.resolve_llm_api_key();
+
+    if config.llm.api_key.is_none()
+        && let Some(env_name) = configured_env
+    {
+        config.llm.api_key = secure_env_value(&env_name)?;
+    }
+
+    Ok(())
+}
+
+fn configured_llm_api_key_env(config: &dbchat_core::AppConfig) -> Option<String> {
+    config
+        .llm
+        .api_key
+        .as_deref()
+        .and_then(|value| value.strip_prefix("env:").map(str::to_string))
+        .or_else(|| config.llm_api_key_env().map(str::to_string))
+}
+
+fn secure_env_value(name: &str) -> color_eyre::Result<Option<String>> {
+    secure_env_value_from_path(&dbchat_core::AppConfig::env_path(), name)
+}
+
+fn secure_env_value_from_path(
+    path: &std::path::Path,
+    name: &str,
+) -> color_eyre::Result<Option<String>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let iter = dotenvy::from_path_iter(path)
+        .map_err(|err| color_eyre::eyre::eyre!("Invalid {}: {err}", path.display()))?;
+    for item in iter {
+        let (key, value) =
+            item.map_err(|err| color_eyre::eyre::eyre!("Invalid {}: {err}", path.display()))?;
+        if key == name {
+            return Ok(Some(value));
+        }
+    }
+    Ok(None)
+}
+
+#[cfg(test)]
+fn unique_test_suffix() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,146 +483,4 @@ mod tests {
         assert!(config.llm.api_url.is_none());
         assert!(config.llm.api_key.is_none());
     }
-}
-
-fn resolve_uri(cli: &Cli) -> Result<Option<String>, color_eyre::eyre::Error> {
-    if let Some(uri) = &cli.connection_string {
-        return Ok(Some(uri.clone()));
-    }
-
-    if let Some(ref cmd) = cli.command {
-        return match cmd {
-            DbCommand::Postgres { uri } => Ok(Some(uri.clone())),
-            DbCommand::Mysql { uri } => Ok(Some(uri.clone())),
-            DbCommand::Sqlite { path } => Ok(Some(format!("sqlite://{path}"))),
-            DbCommand::Config { .. } => unreachable!(),
-        };
-    }
-
-    Ok(None)
-}
-
-fn apply_provider_override(
-    config: &mut dbchat_core::AppConfig,
-    provider: &str,
-) -> Result<(), color_eyre::eyre::Error> {
-    config.llm.provider = match provider.to_lowercase().as_str() {
-        "openai" => {
-            config.llm.api_url = None;
-            config.llm.api_key = None;
-            config.llm.model = "gpt-5.4-mini".to_string();
-            dbchat_core::config::LlmProvider::OpenAI
-        }
-        "anthropic" => {
-            config.llm.api_url = None;
-            config.llm.api_key = None;
-            config.llm.model = "claude-haiku-4-5".to_string();
-            dbchat_core::config::LlmProvider::Anthropic
-        }
-        "ollama" => {
-            config.llm.api_url = None;
-            config.llm.api_key = None;
-            config.llm.model = "llama3".to_string();
-            dbchat_core::config::LlmProvider::Ollama
-        }
-        "google" => {
-            config.llm.api_url = None;
-            config.llm.api_key = None;
-            config.llm.model = config_wizard::GEMINI_FLASH_LITE_MODEL.to_string();
-            dbchat_core::config::LlmProvider::Google
-        }
-        "openai-compatible" | "openai_compatible" | "compatible" => {
-            dbchat_core::config::LlmProvider::OpenAICompatible
-        }
-        "opencode" | "zen" | "opencode-zen" => {
-            config.llm.api_url = Some(config_wizard::OPENCODE_ZEN_CHAT_COMPLETIONS_URL.to_string());
-            config.llm.model = config_wizard::OPENCODE_ZEN_FREE_MODEL.to_string();
-            config.llm.api_key = Some("env:OPENCODE_API_KEY".to_string());
-            dbchat_core::config::LlmProvider::OpenAICompatible
-        }
-        "openrouter" | "openrouter-free" => {
-            config.llm.api_url = Some(config_wizard::OPENROUTER_API_BASE_URL.to_string());
-            config.llm.model = config_wizard::OPENROUTER_FREE_MODEL.to_string();
-            config.llm.api_key = Some("env:OPENROUTER_API_KEY".to_string());
-            dbchat_core::config::LlmProvider::OpenAICompatible
-        }
-        "deepseek" | "deepseek-flash" | "deepseek-flash-free" | "deepseek-v4-flash" => {
-            config.llm.api_url = Some(config_wizard::DEEPSEEK_API_BASE_URL.to_string());
-            config.llm.model = config_wizard::DEEPSEEK_FLASH_MODEL.to_string();
-            config.llm.api_key = Some("env:DEEPSEEK_API_KEY".to_string());
-            dbchat_core::config::LlmProvider::OpenAICompatible
-        }
-        _ => {
-            return Err(color_eyre::eyre::eyre!(
-                "Provider inconnu : {provider} (opencode, openrouter, deepseek, openai, anthropic, ollama, google, openai-compatible)"
-            ));
-        }
-    };
-    Ok(())
-}
-
-fn validate_secure_env_file() -> color_eyre::Result<()> {
-    let path = dbchat_core::AppConfig::env_path();
-    if path.exists() {
-        for item in dotenvy::from_path_iter(&path)
-            .map_err(|err| color_eyre::eyre::eyre!("Invalid {}: {err}", path.display()))?
-        {
-            item.map_err(|err| color_eyre::eyre::eyre!("Invalid {}: {err}", path.display()))?;
-        }
-    }
-    Ok(())
-}
-
-fn resolve_llm_api_key(config: &mut dbchat_core::AppConfig) -> color_eyre::Result<()> {
-    let configured_env = configured_llm_api_key_env(config);
-    config.resolve_llm_api_key();
-
-    if config.llm.api_key.is_none() {
-        if let Some(env_name) = configured_env {
-            config.llm.api_key = secure_env_value(&env_name)?;
-        }
-    }
-
-    Ok(())
-}
-
-fn configured_llm_api_key_env(config: &dbchat_core::AppConfig) -> Option<String> {
-    config
-        .llm
-        .api_key
-        .as_deref()
-        .and_then(|value| value.strip_prefix("env:").map(str::to_string))
-        .or_else(|| config.llm_api_key_env().map(str::to_string))
-}
-
-fn secure_env_value(name: &str) -> color_eyre::Result<Option<String>> {
-    secure_env_value_from_path(&dbchat_core::AppConfig::env_path(), name)
-}
-
-fn secure_env_value_from_path(
-    path: &std::path::Path,
-    name: &str,
-) -> color_eyre::Result<Option<String>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let iter = dotenvy::from_path_iter(path)
-        .map_err(|err| color_eyre::eyre::eyre!("Invalid {}: {err}", path.display()))?;
-    for item in iter {
-        let (key, value) =
-            item.map_err(|err| color_eyre::eyre::eyre!("Invalid {}: {err}", path.display()))?;
-        if key == name {
-            return Ok(Some(value));
-        }
-    }
-    Ok(None)
-}
-
-#[cfg(test)]
-fn unique_test_suffix() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos()
 }

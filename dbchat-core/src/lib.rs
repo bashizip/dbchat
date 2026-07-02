@@ -81,12 +81,7 @@ impl DbChat {
             self.db.execute_raw(&sql),
         )
         .await
-        .map_err(|_| DbChatError::Timeout(self.config.db.query_timeout_secs))?
-        .map_err(|e| {
-            let err_str = e.to_string();
-            let _future = self.llm.explain_error(&sql, &err_str, question);
-            e
-        })?;
+        .map_err(|_| DbChatError::Timeout(self.config.db.query_timeout_secs))??;
 
         let elapsed = start.elapsed();
 

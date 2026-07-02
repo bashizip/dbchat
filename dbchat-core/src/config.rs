@@ -87,17 +87,12 @@ impl Default for LlmConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub enum OutputFormat {
+    #[default]
     Table,
     Json,
     Csv,
-}
-
-impl Default for OutputFormat {
-    fn default() -> Self {
-        Self::Table
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -159,21 +154,11 @@ impl Default for DisplayConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     pub db: DbConfig,
     pub llm: LlmConfig,
     pub display: DisplayConfig,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            db: DbConfig::default(),
-            llm: LlmConfig::default(),
-            display: DisplayConfig::default(),
-        }
-    }
 }
 
 impl AppConfig {
@@ -210,10 +195,10 @@ impl AppConfig {
 
     pub fn load() -> Self {
         let path = Self::config_path();
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Ok(config) = toml::from_str(&content) {
-                return config;
-            }
+        if let Ok(content) = std::fs::read_to_string(&path)
+            && let Ok(config) = toml::from_str(&content)
+        {
+            return config;
         }
         let config = AppConfig::default();
         let _ = config.save();
@@ -231,7 +216,7 @@ impl AppConfig {
     pub fn config_dir() -> PathBuf {
         if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
             PathBuf::from(dir).join("dbchat")
-        } else if let Some(home) = std::env::var("HOME").ok() {
+        } else if let Ok(home) = std::env::var("HOME") {
             PathBuf::from(home).join(".config").join("dbchat")
         } else {
             PathBuf::from("./dbchat")

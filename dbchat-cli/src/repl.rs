@@ -70,7 +70,7 @@ async fn handle_command(
     history: &[String],
     loc: &dbchat_core::config::Locale,
 ) -> bool {
-    let parts: Vec<&str> = cmd.trim().split_whitespace().collect();
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
     let command = parts[0].to_lowercase();
 
     match command.as_str() {
@@ -98,7 +98,7 @@ async fn handle_command(
 
         "/schema" => {
             for table in &dbchat.schema.tables {
-                render::print_bold(&format!("{} {}", loc.t("Table:", "Table:"), table.name));
+                render::print_bold(format!("{} {}", loc.t("Table:", "Table:"), table.name));
                 for col in &table.columns {
                     let mut flags = String::new();
                     if col.is_primary_key {
@@ -187,7 +187,7 @@ async fn handle_command(
         }
 
         _ => {
-            render::print_red(&format!(
+            render::print_red(format!(
                 "{}: {command}",
                 loc.t("Unknown command", "Unknown command")
             ));
@@ -209,7 +209,7 @@ fn dirs_dbchat_history() -> Option<String> {
 fn dirs_data_dir() -> String {
     if let Ok(dir) = std::env::var("XDG_DATA_HOME") {
         format!("{dir}/dbchat")
-    } else if let Some(home) = std::env::var("HOME").ok() {
+    } else if let Ok(home) = std::env::var("HOME") {
         format!("{home}/.local/share/dbchat")
     } else {
         "./.dbchat".to_string()

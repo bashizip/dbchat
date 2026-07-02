@@ -1,5 +1,4 @@
-use dialoguer::theme::ColorfulTheme;
-use dialoguer::{Confirm, Input, Password, Select};
+use dialoguer::{Confirm, Input, Password};
 use std::io::Write;
 use std::path::Path;
 
@@ -7,6 +6,9 @@ use dbchat_core::config::{
     AppConfig, DEFAULT_OPENCODE_API_KEY_ENV, DEFAULT_OPENCODE_ZEN_CHAT_COMPLETIONS_URL,
     DEFAULT_OPENCODE_ZEN_MODEL, DbEngine, LlmProvider,
 };
+
+use crate::ui::menu::{Flash, TerminalUi};
+use crate::ui::theme::{SECRET_MASK, TerminalTheme, mask_secret};
 
 pub const OPENCODE_ZEN_CHAT_COMPLETIONS_URL: &str = DEFAULT_OPENCODE_ZEN_CHAT_COMPLETIONS_URL;
 pub const OPENCODE_ZEN_FREE_MODEL: &str = DEFAULT_OPENCODE_ZEN_MODEL;
@@ -16,7 +18,9 @@ pub const OPENROUTER_API_BASE_URL: &str = "https://openrouter.ai/api/v1";
 pub const OPENROUTER_FREE_MODEL: &str = "openrouter/free";
 pub const GEMINI_FLASH_LITE_MODEL: &str = "gemini-3.1-flash-lite";
 const GEMINI_FLASH_MODEL: &str = "gemini-3.5-flash";
+const OLLAMA_CHAT_URL: &str = "http://localhost:11434/api/chat";
 
+#[derive(Clone, Copy)]
 struct LlmPreset {
     label: &'static str,
     provider: LlmProvider,
@@ -109,80 +113,145 @@ const PAID_LLM_PRESETS: &[LlmPreset] = &[
 ];
 
 pub fn run_config_menu(mut config: AppConfig) -> color_eyre::Result<AppConfig> {
-    let theme = ColorfulTheme::default();
+    let ui = TerminalUi::new();
+
+    match run_config_menu_loop(&ui, &mut config) {
+        Ok(()) => Ok(config),
+        Err(err) if is_interrupted_error(&err) => {
+            println!();
+            ui.flash(&Flash::warning("Configuration interrompue"));
+            Ok(config)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn run_config_menu_loop(ui: &TerminalUi, config: &mut AppConfig) -> color_eyre::Result<()> {
+    let mut flash = None;
 
     loop {
+        ui.reset("Connexion BD > LLM > Sécurité requêtes")?;
+        print_current_config(ui, config);
+        if let Some(message) = &flash {
+            ui.flash(message);
+        }
+
         let items = [
             "1. Connexion BD",
             "2. LLM",
-            "3. Securite requetes",
+            "3. Sécurité requêtes",
             "4. Afficher config",
-            "5. Quitter",
+            "5. Tester la configuration",
+            "6. Quitter",
         ];
-        let choice = Select::with_theme(&theme)
-            .with_prompt("Que veux-tu configurer ?")
-            .items(&items)
-            .default(0)
-            .interact()?;
+
+        ui.footer();
+        let choice = ui.select("Que veux-tu configurer ?", &items, 0)?;
+        flash = None;
 
         match choice {
-            0 => {
-                configure_database(&theme, &mut config)?;
-                save_config(&config)?;
+            Some(0) => {
+                if configure_database(ui, config)? {
+                    save_config(config)?;
+                    flash = Some(Flash::success("Connexion BD sauvegardée"));
+                }
             }
-            1 => {
-                configure_llm(&theme, &mut config)?;
-                save_config(&config)?;
+            Some(1) => {
+                if configure_llm(ui, config)? {
+                    save_config(config)?;
+                    flash = Some(Flash::success("LLM sauvegardé"));
+                }
             }
-            2 => {
-                configure_query_safety(&theme, &mut config)?;
-                save_config(&config)?;
+            Some(2) => {
+                if configure_query_safety(ui, config)? {
+                    save_config(config)?;
+                    flash = Some(Flash::success("Sécurité requêtes sauvegardée"));
+                }
             }
-            3 => print_config_summary(&config),
-            _ => break,
+            Some(3) => show_config_screen(ui, config)?,
+            Some(4) => test_config_screen(ui, config)?,
+            Some(5) | None => break,
+            _ => {}
         }
     }
 
-    Ok(config)
+    Ok(())
 }
 
 pub fn print_config_summary(config: &AppConfig) {
-    println!("\x1b[1mConfig active:\x1b[0m");
-    println!("  Path: {}", AppConfig::config_path().display());
-    println!(
-        "  DB:   {} {}",
-        config.db.engine,
-        crate::redact_uri(&config.db.uri)
-    );
-    println!(
-        "  LLM:  {} / {}",
-        llm_provider_name(&config.llm.provider),
-        config.llm.model
-    );
-    println!(
-        "  Ops:  read_only={}, safe_mode={}, max_rows={}, timeout={}s",
-        config.db.read_only, config.db.safe_mode, config.db.max_rows, config.db.query_timeout_secs
-    );
+    let theme = TerminalTheme::new();
+    println!("{}", theme.info("Config active:"));
+    for line in detailed_config_lines(config) {
+        println!("  {line}");
+    }
     println!();
 }
 
-fn configure_database(theme: &ColorfulTheme, config: &mut AppConfig) -> color_eyre::Result<()> {
-    let engines = ["PostgreSQL", "MySQL", "SQLite"];
+fn print_current_config(ui: &TerminalUi, config: &AppConfig) {
+    println!("{}", ui.theme().bold("Configuration actuelle :"));
+    for line in current_config_lines(config) {
+        println!("- {line}");
+    }
+    println!();
+}
+
+fn current_config_lines(config: &AppConfig) -> Vec<String> {
+    vec![
+        format!("BD : {}", database_status(config)),
+        format!("LLM : {}", llm_display_name(config)),
+        format!("API key : {}", api_key_status(config)),
+        format!("Sécurité requêtes : {}", query_safety_status(config)),
+    ]
+}
+
+fn detailed_config_lines(config: &AppConfig) -> Vec<String> {
+    vec![
+        format!("Path: {}", AppConfig::config_path().display()),
+        format!("DB: {} {}", config.db.engine, database_uri_display(config)),
+        format!(
+            "LLM: {} / {}",
+            llm_provider_name(&config.llm.provider),
+            config.llm.model
+        ),
+        format!(
+            "API URL: {}",
+            config.llm.api_url.as_deref().unwrap_or("provider default")
+        ),
+        format!("API key: {}", api_key_status(config)),
+        format!(
+            "Ops: read_only={}, safe_mode={}, max_rows={}, timeout={}s",
+            config.db.read_only,
+            config.db.safe_mode,
+            config.db.max_rows,
+            config.db.query_timeout_secs
+        ),
+    ]
+}
+
+fn configure_database(ui: &TerminalUi, config: &mut AppConfig) -> color_eyre::Result<bool> {
+    let mut proposed = config.clone();
+
+    ui.reset("Connexion BD")?;
+    let engines = ["PostgreSQL", "MySQL", "SQLite", "Retour"];
     let default = match config.db.engine {
         DbEngine::Postgres => 0,
         DbEngine::Mysql => 1,
         DbEngine::Sqlite => 2,
     };
-    let selected = Select::with_theme(theme)
-        .with_prompt("Type de base de donnees")
-        .items(&engines)
-        .default(default)
-        .interact()?;
 
+    ui.footer();
+    let Some(selected) = ui.select("Type de base de données", &engines, default)? else {
+        return Ok(false);
+    };
+    if selected == engines.len() - 1 {
+        return Ok(false);
+    }
+
+    ui.reset("Connexion BD > Paramètres")?;
     match selected {
         0 => {
-            config.db.engine = DbEngine::Postgres;
-            config.db.uri = Input::with_theme(theme)
+            proposed.db.engine = DbEngine::Postgres;
+            proposed.db.uri = Input::with_theme(ui.prompt_theme())
                 .with_prompt("URI PostgreSQL")
                 .default(non_empty_or(
                     &config.db.uri,
@@ -191,8 +260,8 @@ fn configure_database(theme: &ColorfulTheme, config: &mut AppConfig) -> color_ey
                 .interact_text()?;
         }
         1 => {
-            config.db.engine = DbEngine::Mysql;
-            config.db.uri = Input::with_theme(theme)
+            proposed.db.engine = DbEngine::Mysql;
+            proposed.db.uri = Input::with_theme(ui.prompt_theme())
                 .with_prompt("URI MySQL")
                 .default(non_empty_or(
                     &config.db.uri,
@@ -201,17 +270,17 @@ fn configure_database(theme: &ColorfulTheme, config: &mut AppConfig) -> color_ey
                 .interact_text()?;
         }
         _ => {
-            config.db.engine = DbEngine::Sqlite;
+            proposed.db.engine = DbEngine::Sqlite;
             let current = config
                 .db
                 .uri
                 .strip_prefix("sqlite://")
                 .unwrap_or(&config.db.uri);
-            let path: String = Input::with_theme(theme)
+            let path: String = Input::with_theme(ui.prompt_theme())
                 .with_prompt("Chemin SQLite")
                 .default(non_empty_or(current, "./db.sqlite"))
                 .interact_text()?;
-            config.db.uri = if path.starts_with("sqlite://") {
+            proposed.db.uri = if path.starts_with("sqlite://") {
                 path
             } else {
                 format!("sqlite://{path}")
@@ -219,119 +288,325 @@ fn configure_database(theme: &ColorfulTheme, config: &mut AppConfig) -> color_ey
         }
     }
 
-    Ok(())
+    ui.reset("Connexion BD > Résumé")?;
+    println!("Moteur : {}", proposed.db.engine);
+    println!("URI    : {}", crate::redact_uri(&proposed.db.uri));
+    println!();
+
+    let save = Confirm::with_theme(ui.prompt_theme())
+        .with_prompt("Sauvegarder cette connexion ?")
+        .default(true)
+        .interact()?;
+    if save {
+        *config = proposed;
+    }
+    Ok(save)
 }
 
-fn configure_llm(theme: &ColorfulTheme, config: &mut AppConfig) -> color_eyre::Result<()> {
-    let sections = [
-        "Gratuits / free tier",
-        "Payants courants",
-        "Avance / custom API",
-    ];
-    let default = if preset_index(config, FREE_LLM_PRESETS).is_some() {
-        0
-    } else if preset_index(config, PAID_LLM_PRESETS).is_some() {
-        1
-    } else {
-        2
-    };
-    let selected = Select::with_theme(theme)
-        .with_prompt("Type de modele LLM")
-        .items(&sections)
-        .default(default)
-        .interact()?;
+fn configure_llm(ui: &TerminalUi, config: &mut AppConfig) -> color_eyre::Result<bool> {
+    loop {
+        ui.reset("LLM")?;
+        let sections = [
+            "Gratuit / free tier",
+            "Payants courants",
+            "OpenAI-compatible custom",
+            "Local model",
+            "Retour",
+        ];
+        let default = llm_tier_default(config);
 
-    match selected {
-        0 => configure_llm_preset(theme, config, FREE_LLM_PRESETS),
-        1 => configure_llm_preset(theme, config, PAID_LLM_PRESETS),
-        _ => configure_custom_llm(theme, config),
+        ui.footer();
+        let Some(selected) = ui.select("Choix du provider / tier", &sections, default)? else {
+            return Ok(false);
+        };
+
+        let proposed = match selected {
+            0 => configure_llm_preset_flow(
+                ui,
+                config,
+                FREE_LLM_PRESETS,
+                "LLM > Gratuit / free tier",
+            )?,
+            1 => configure_llm_preset_flow(ui, config, PAID_LLM_PRESETS, "LLM > Payants")?,
+            2 => configure_openai_compatible_custom(ui, config)?,
+            3 => configure_local_model(ui, config)?,
+            _ => return Ok(false),
+        };
+
+        if let Some(proposed) = proposed {
+            *config = proposed;
+            return Ok(true);
+        }
     }
 }
 
-fn configure_llm_preset(
-    theme: &ColorfulTheme,
-    config: &mut AppConfig,
+fn configure_llm_preset_flow(
+    ui: &TerminalUi,
+    config: &AppConfig,
     presets: &[LlmPreset],
-) -> color_eyre::Result<()> {
-    let labels: Vec<&str> = presets.iter().map(|preset| preset.label).collect();
+    trail: &str,
+) -> color_eyre::Result<Option<AppConfig>> {
+    ui.reset(trail)?;
+    let mut labels: Vec<String> = presets
+        .iter()
+        .map(|preset| preset.label.to_string())
+        .collect();
+    labels.push("Retour".to_string());
     let default = preset_index(config, presets).unwrap_or(0);
-    let selected = Select::with_theme(theme)
-        .with_prompt("Modele")
-        .items(&labels)
-        .default(default)
-        .interact()?;
-    apply_llm_preset(config, &presets[selected]);
 
-    let env_name = presets[selected].api_key_env;
-    println!("Par defaut, ce modele utilise la variable d'environnement {env_name}");
-    configure_api_key(theme, config, env_name)?;
+    ui.footer();
+    let Some(selected) = ui.select("Choix du modèle", &labels, default)? else {
+        return Ok(None);
+    };
+    if selected == labels.len() - 1 {
+        return Ok(None);
+    }
 
-    Ok(())
+    let preset = presets[selected];
+    let mut proposed = config.clone();
+    apply_llm_preset(&mut proposed, &preset);
+
+    if !configure_api_key(ui, &mut proposed, preset.api_key_env)? {
+        return Ok(None);
+    }
+
+    if confirm_llm_summary(ui, &proposed)? {
+        Ok(Some(proposed))
+    } else {
+        Ok(None)
+    }
 }
 
-fn configure_custom_llm(theme: &ColorfulTheme, config: &mut AppConfig) -> color_eyre::Result<()> {
-    let providers = [
-        "OpenAI custom",
-        "Anthropic custom",
-        "Google custom",
-        "OpenAI-compatible custom",
-    ];
-    let default = match config.llm.provider {
-        LlmProvider::OpenAI => 0,
-        LlmProvider::Anthropic => 1,
-        LlmProvider::Google => 2,
-        LlmProvider::OpenAICompatible | LlmProvider::Ollama => 3,
+fn configure_openai_compatible_custom(
+    ui: &TerminalUi,
+    config: &AppConfig,
+) -> color_eyre::Result<Option<AppConfig>> {
+    let mut proposed = config.clone();
+
+    ui.reset("LLM > OpenAI-compatible custom")?;
+    proposed.llm.provider = LlmProvider::OpenAICompatible;
+    proposed.llm.api_url = Some(
+        Input::with_theme(ui.prompt_theme())
+            .with_prompt("Base URL ou URL /chat/completions")
+            .default(
+                config
+                    .llm
+                    .api_url
+                    .clone()
+                    .unwrap_or_else(|| OPENCODE_ZEN_CHAT_COMPLETIONS_URL.to_string()),
+            )
+            .interact_text()?,
+    );
+    proposed.llm.model = prompt_model(ui, &config.llm.model, OPENCODE_ZEN_FREE_MODEL)?;
+    proposed.llm.temperature = prompt_temperature(ui, config.llm.temperature)?;
+
+    let default_env = proposed
+        .llm_api_key_env()
+        .unwrap_or(DEFAULT_OPENCODE_API_KEY_ENV);
+    if !configure_api_key(ui, &mut proposed, default_env)? {
+        return Ok(None);
+    }
+
+    if confirm_llm_summary(ui, &proposed)? {
+        Ok(Some(proposed))
+    } else {
+        Ok(None)
+    }
+}
+
+fn configure_local_model(
+    ui: &TerminalUi,
+    config: &AppConfig,
+) -> color_eyre::Result<Option<AppConfig>> {
+    let mut proposed = config.clone();
+
+    ui.reset("LLM > Local model")?;
+    proposed.llm.provider = LlmProvider::Ollama;
+    proposed.llm.model = prompt_model(ui, &config.llm.model, "llama3")?;
+    proposed.llm.api_url = Some(
+        Input::with_theme(ui.prompt_theme())
+            .with_prompt("Endpoint local")
+            .default(
+                config
+                    .llm
+                    .api_url
+                    .clone()
+                    .unwrap_or_else(|| OLLAMA_CHAT_URL.to_string()),
+            )
+            .interact_text()?,
+    );
+    proposed.llm.temperature = prompt_temperature(ui, config.llm.temperature)?;
+    proposed.llm.api_key = None;
+
+    if confirm_llm_summary(ui, &proposed)? {
+        Ok(Some(proposed))
+    } else {
+        Ok(None)
+    }
+}
+
+fn configure_query_safety(ui: &TerminalUi, config: &mut AppConfig) -> color_eyre::Result<bool> {
+    let mut proposed = config.clone();
+
+    ui.reset("Sécurité requêtes")?;
+    let choices = ["Modifier les paramètres", "Retour"];
+    ui.footer();
+    let Some(selected) = ui.select("Action", &choices, 0)? else {
+        return Ok(false);
     };
-    let selected = Select::with_theme(theme)
-        .with_prompt("Provider custom")
-        .items(&providers)
-        .default(default)
+    if selected == 1 {
+        return Ok(false);
+    }
+
+    ui.reset("Sécurité requêtes > Paramètres")?;
+    proposed.db.read_only = Confirm::with_theme(ui.prompt_theme())
+        .with_prompt("Bloquer les requêtes destructives ?")
+        .default(config.db.read_only)
         .interact()?;
+    proposed.db.safe_mode = Confirm::with_theme(ui.prompt_theme())
+        .with_prompt("Demander confirmation avant les requêtes dangereuses ?")
+        .default(config.db.safe_mode)
+        .interact()?;
+    proposed.db.max_rows = Input::with_theme(ui.prompt_theme())
+        .with_prompt("Nombre max de lignes")
+        .default(config.db.max_rows)
+        .interact_text()?;
+    proposed.db.query_timeout_secs = Input::with_theme(ui.prompt_theme())
+        .with_prompt("Timeout requêtes (secondes)")
+        .default(config.db.query_timeout_secs)
+        .interact_text()?;
+
+    ui.reset("Sécurité requêtes > Résumé")?;
+    println!("Lecture seule       : {}", yes_no(proposed.db.read_only));
+    println!("Confirmations       : {}", yes_no(proposed.db.safe_mode));
+    println!("Lignes max          : {}", proposed.db.max_rows);
+    println!("Timeout             : {}s", proposed.db.query_timeout_secs);
+    println!();
+
+    let save = Confirm::with_theme(ui.prompt_theme())
+        .with_prompt("Sauvegarder ces paramètres ?")
+        .default(true)
+        .interact()?;
+    if save {
+        *config = proposed;
+    }
+    Ok(save)
+}
+
+fn configure_api_key(
+    ui: &TerminalUi,
+    config: &mut AppConfig,
+    default_env: &str,
+) -> color_eyre::Result<bool> {
+    ui.reset("LLM > Clé API")?;
+    let env_name = current_api_key_env(config, default_env);
+    println!("Modèle  : {}", config.llm.model);
+    println!("Provider: {}", llm_provider_name(&config.llm.provider));
+    println!("Actuel  : {}", api_key_status(config));
+    println!();
+
+    let choices = [
+        format!("Utiliser variable d'environnement {env_name}"),
+        "Stocker dans le fichier sécurisé dbchat".to_string(),
+        "Effacer / ne pas configurer de clé".to_string(),
+        "Retour".to_string(),
+    ];
+
+    ui.footer();
+    let Some(selected) = ui.select("Clé API", &choices, 0)? else {
+        return Ok(false);
+    };
 
     match selected {
         0 => {
-            config.llm.provider = LlmProvider::OpenAI;
-            config.llm.api_url = None;
-            config.llm.model = prompt_model(theme, &config.llm.model, "gpt-5.4-mini")?;
-            configure_api_key(theme, config, "OPENAI_API_KEY")?;
+            ui.reset("LLM > Clé API > Variable d'environnement")?;
+            let env_name: String = Input::with_theme(ui.prompt_theme())
+                .with_prompt("Nom de la variable d'environnement")
+                .default(env_name)
+                .interact_text()?;
+            validate_env_name(&env_name)?;
+            config.llm.api_key = Some(format!("env:{env_name}"));
+            Ok(true)
         }
         1 => {
-            config.llm.provider = LlmProvider::Anthropic;
-            config.llm.api_url = None;
-            config.llm.model = prompt_model(theme, &config.llm.model, "claude-haiku-4-5")?;
-            configure_api_key(theme, config, "ANTHROPIC_API_KEY")?;
+            ui.reset("LLM > Clé API > Stockage sécurisé")?;
+            println!("Fichier : {}", AppConfig::env_path().display());
+            println!("Valeur  : {SECRET_MASK}");
+            println!();
+
+            let env_name: String = Input::with_theme(ui.prompt_theme())
+                .with_prompt("Nom de la variable d'environnement")
+                .default(env_name)
+                .interact_text()?;
+            validate_env_name(&env_name)?;
+
+            let key = Password::with_theme(ui.prompt_theme())
+                .with_prompt("Clé API")
+                .allow_empty_password(true)
+                .interact()?;
+            if key.trim().is_empty() {
+                ui.flash(&Flash::warning("Clé vide. Rien n'a été sauvegardé."));
+                ui.wait_for_enter()?;
+                return Ok(false);
+            }
+
+            write_secure_env_key(&env_name, &key)?;
+            config.llm.api_key = Some(format!("env:{env_name}"));
+
+            if !secure_env_file_is_private(&AppConfig::env_path())? {
+                ui.flash(&Flash::warning(
+                    "Le fichier de secrets existe, mais ses permissions n'ont pas pu être vérifiées.",
+                ));
+            }
+            Ok(true)
         }
         2 => {
-            config.llm.provider = LlmProvider::Google;
-            config.llm.api_url = None;
-            config.llm.model = prompt_model(theme, &config.llm.model, GEMINI_FLASH_LITE_MODEL)?;
-            configure_api_key(theme, config, "GOOGLE_API_KEY")?;
+            config.llm.api_key = None;
+            Ok(true)
         }
-        _ => {
-            config.llm.provider = LlmProvider::OpenAICompatible;
-            config.llm.api_url = Some(
-                Input::with_theme(theme)
-                    .with_prompt("Base URL ou URL /chat/completions")
-                    .default(
-                        config
-                            .llm
-                            .api_url
-                            .clone()
-                            .unwrap_or_else(|| OPENCODE_ZEN_CHAT_COMPLETIONS_URL.to_string()),
-                    )
-                    .interact_text()?,
-            );
-            config.llm.model = prompt_model(theme, &config.llm.model, OPENCODE_ZEN_FREE_MODEL)?;
-            configure_api_key(theme, config, DEFAULT_OPENCODE_API_KEY_ENV)?;
-        }
+        _ => Ok(false),
     }
+}
 
-    config.llm.temperature = Input::with_theme(theme)
-        .with_prompt("Temperature")
-        .default(config.llm.temperature)
-        .interact_text()?;
+fn show_config_screen(ui: &TerminalUi, config: &AppConfig) -> color_eyre::Result<()> {
+    ui.reset("Afficher config")?;
+    println!("{}", ui.theme().bold("Configuration active :"));
+    for line in detailed_config_lines(config) {
+        println!("- {line}");
+    }
+    ui.wait_for_enter()
+}
 
-    Ok(())
+fn test_config_screen(ui: &TerminalUi, config: &AppConfig) -> color_eyre::Result<()> {
+    ui.reset("Tester la configuration")?;
+    println!("{}", ui.theme().bold("Vérifications locales :"));
+    for check in config_checks(config) {
+        let icon = match check.kind {
+            CheckKind::Ok => ui.theme().check(),
+            CheckKind::Warning => ui.theme().warn_icon(),
+            CheckKind::Error => ui.theme().cross(),
+        };
+        println!("{icon} {}", check.message);
+    }
+    ui.wait_for_enter()
+}
+
+fn confirm_llm_summary(ui: &TerminalUi, config: &AppConfig) -> color_eyre::Result<bool> {
+    ui.reset("LLM > Résumé")?;
+    println!("Provider : {}", llm_provider_name(&config.llm.provider));
+    println!("Modèle   : {}", config.llm.model);
+    println!(
+        "Endpoint : {}",
+        config.llm.api_url.as_deref().unwrap_or("provider default")
+    );
+    println!("Clé API  : {}", api_key_status(config));
+    println!("Temp.    : {}", config.llm.temperature);
+    println!();
+
+    Ok(Confirm::with_theme(ui.prompt_theme())
+        .with_prompt("Sauvegarder cette configuration LLM ?")
+        .default(true)
+        .interact()?)
 }
 
 fn apply_llm_preset(config: &mut AppConfig, preset: &LlmPreset) {
@@ -350,95 +625,260 @@ fn preset_index(config: &AppConfig, presets: &[LlmPreset]) -> Option<usize> {
     })
 }
 
-fn configure_query_safety(theme: &ColorfulTheme, config: &mut AppConfig) -> color_eyre::Result<()> {
-    config.db.read_only = Confirm::with_theme(theme)
-        .with_prompt("Bloquer les requetes destructives ?")
-        .default(config.db.read_only)
-        .interact()?;
-    config.db.safe_mode = Confirm::with_theme(theme)
-        .with_prompt("Demander confirmation avant les requetes dangereuses ?")
-        .default(config.db.safe_mode)
-        .interact()?;
-    config.db.max_rows = Input::with_theme(theme)
-        .with_prompt("Nombre max de lignes")
-        .default(config.db.max_rows)
-        .interact_text()?;
-    config.db.query_timeout_secs = Input::with_theme(theme)
-        .with_prompt("Timeout requetes (secondes)")
-        .default(config.db.query_timeout_secs)
-        .interact_text()?;
-    Ok(())
+fn llm_tier_default(config: &AppConfig) -> usize {
+    if preset_index(config, FREE_LLM_PRESETS).is_some() {
+        0
+    } else if preset_index(config, PAID_LLM_PRESETS).is_some() {
+        1
+    } else if config.llm.provider == LlmProvider::Ollama {
+        3
+    } else {
+        2
+    }
 }
 
-fn configure_api_key(
-    theme: &ColorfulTheme,
-    config: &mut AppConfig,
-    default_env: &str,
-) -> color_eyre::Result<()> {
-    let choices = [
-        "Utiliser une variable d'environnement",
-        "Stocker la cle dans le .env securise dbchat",
-        "Effacer / ne pas configurer de cle",
-    ];
-    let default = match config.llm.api_key.as_deref() {
-        Some(value) if value.starts_with("env:") => 0,
-        Some(_) => 1,
-        None => 0,
-    };
-    let selected = Select::with_theme(theme)
-        .with_prompt("Cle API")
-        .items(&choices)
-        .default(default)
-        .interact()?;
+fn prompt_model(ui: &TerminalUi, current: &str, fallback: &str) -> color_eyre::Result<String> {
+    Ok(Input::with_theme(ui.prompt_theme())
+        .with_prompt("Modèle")
+        .default(non_empty_or(current, fallback))
+        .interact_text()?)
+}
 
-    match selected {
-        0 => {
-            let current = config
-                .llm
-                .api_key
-                .as_deref()
-                .and_then(|value| value.strip_prefix("env:"))
-                .unwrap_or(default_env);
-            let env_name: String = Input::with_theme(theme)
-                .with_prompt("Nom de la variable d'environnement")
-                .default(current.to_string())
-                .interact_text()?;
-            validate_env_name(&env_name)?;
-            config.llm.api_key = Some(format!("env:{env_name}"));
-        }
-        1 => {
-            let env_name = config
-                .llm
-                .api_key
-                .as_deref()
-                .and_then(|value| value.strip_prefix("env:"))
-                .unwrap_or(default_env)
-                .to_string();
-            validate_env_name(&env_name)?;
-            let key = Password::with_theme(theme)
-                .with_prompt("Cle API")
-                .allow_empty_password(true)
-                .interact()?;
-            if !key.trim().is_empty() {
-                write_secure_env_key(&env_name, &key)?;
-                config.llm.api_key = Some(format!("env:{env_name}"));
-                println!(
-                    "Cle stockee dans le fichier securise {}",
-                    AppConfig::env_path().display()
-                );
-            }
-        }
-        _ => config.llm.api_key = None,
+fn prompt_temperature(ui: &TerminalUi, current: f64) -> color_eyre::Result<f64> {
+    Ok(Input::with_theme(ui.prompt_theme())
+        .with_prompt("Temperature")
+        .default(current)
+        .interact_text()?)
+}
+
+fn save_config(config: &AppConfig) -> color_eyre::Result<()> {
+    config.save().map_err(|err| color_eyre::eyre::eyre!(err))
+}
+
+fn is_interrupted_error(err: &color_eyre::Report) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .map(|io| io.kind() == std::io::ErrorKind::Interrupted)
+            .unwrap_or(false)
+            || cause.to_string().to_lowercase().contains("interrupted")
+    })
+}
+
+fn database_status(config: &AppConfig) -> String {
+    if config.has_database_uri() {
+        format!("configurée ({})", config.db.engine)
+    } else {
+        "non configurée".to_string()
+    }
+}
+
+fn database_uri_display(config: &AppConfig) -> String {
+    if config.has_database_uri() {
+        crate::redact_uri(&config.db.uri)
+    } else {
+        "non configurée".to_string()
+    }
+}
+
+fn llm_display_name(config: &AppConfig) -> String {
+    preset_label(config)
+        .map(strip_recommended_suffix)
+        .unwrap_or_else(|| {
+            format!(
+                "{} {}",
+                llm_provider_name(&config.llm.provider),
+                config.llm.model
+            )
+        })
+}
+
+fn preset_label(config: &AppConfig) -> Option<&'static str> {
+    FREE_LLM_PRESETS
+        .iter()
+        .chain(PAID_LLM_PRESETS.iter())
+        .find(|preset| {
+            preset.provider == config.llm.provider
+                && preset.model == config.llm.model
+                && preset.api_url == config.llm.api_url.as_deref()
+        })
+        .map(|preset| preset.label)
+}
+
+fn strip_recommended_suffix(label: &str) -> String {
+    label.replace(" (Recommended)", "")
+}
+
+fn query_safety_status(config: &AppConfig) -> &'static str {
+    if config.db.read_only || config.db.safe_mode {
+        "activée"
+    } else {
+        "désactivée"
+    }
+}
+
+fn api_key_status(config: &AppConfig) -> String {
+    api_key_status_for_path(config, &AppConfig::env_path())
+}
+
+fn api_key_status_for_path(config: &AppConfig, secure_env_path: &Path) -> String {
+    match api_key_source_for_path(config, secure_env_path) {
+        ApiKeySource::EnvVar(name) => name,
+        ApiKeySource::SecureFile(name) => format!("fichier sécurisé ({name})"),
+        ApiKeySource::InlineSecret => mask_secret(Some("stored")).to_string(),
+        ApiKeySource::MissingEnv(name) => format!("{name} (manquante)"),
+        ApiKeySource::NotConfigured => mask_secret(None).to_string(),
+        ApiKeySource::NotRequired => "non requise".to_string(),
+    }
+}
+
+fn api_key_source_for_path(config: &AppConfig, secure_env_path: &Path) -> ApiKeySource {
+    if config.llm.provider == LlmProvider::Ollama {
+        return ApiKeySource::NotRequired;
     }
 
-    Ok(())
+    if let Some(value) = config.llm.api_key.as_deref() {
+        if let Some(name) = value.strip_prefix("env:") {
+            return env_api_key_source(name, secure_env_path);
+        }
+        if !value.trim().is_empty() {
+            return ApiKeySource::InlineSecret;
+        }
+    }
+
+    config
+        .llm_api_key_env()
+        .map(|name| env_api_key_source(name, secure_env_path))
+        .unwrap_or(ApiKeySource::NotConfigured)
+}
+
+fn env_api_key_source(name: &str, secure_env_path: &Path) -> ApiKeySource {
+    if std::env::var(name)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return ApiKeySource::EnvVar(name.to_string());
+    }
+
+    match secure_env_value_from_path(secure_env_path, name) {
+        Ok(Some(value)) if !value.trim().is_empty() => ApiKeySource::SecureFile(name.to_string()),
+        _ => ApiKeySource::MissingEnv(name.to_string()),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ApiKeySource {
+    EnvVar(String),
+    SecureFile(String),
+    InlineSecret,
+    MissingEnv(String),
+    NotConfigured,
+    NotRequired,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CheckKind {
+    Ok,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConfigCheck {
+    kind: CheckKind,
+    message: String,
+}
+
+fn config_checks(config: &AppConfig) -> Vec<ConfigCheck> {
+    let mut checks = Vec::new();
+
+    if !config.has_database_uri() {
+        checks.push(ConfigCheck {
+            kind: CheckKind::Error,
+            message: "BD: non configurée. Choisissez Connexion BD.".to_string(),
+        });
+    } else if AppConfig::from_uri(&config.db.uri).is_ok() {
+        checks.push(ConfigCheck {
+            kind: CheckKind::Ok,
+            message: format!("BD: {} configurée", config.db.engine),
+        });
+    } else {
+        checks.push(ConfigCheck {
+            kind: CheckKind::Error,
+            message: "BD: URI non reconnue. Corrigez la connexion BD.".to_string(),
+        });
+    }
+
+    if config.llm.model.trim().is_empty() {
+        checks.push(ConfigCheck {
+            kind: CheckKind::Error,
+            message: "LLM: modèle manquant. Choisissez un modèle.".to_string(),
+        });
+    } else {
+        checks.push(ConfigCheck {
+            kind: CheckKind::Ok,
+            message: format!("LLM: {}", llm_display_name(config)),
+        });
+    }
+
+    match api_key_source_for_path(config, &AppConfig::env_path()) {
+        ApiKeySource::EnvVar(name) => checks.push(ConfigCheck {
+            kind: CheckKind::Ok,
+            message: format!("API key: {name} disponible dans l'environnement"),
+        }),
+        ApiKeySource::SecureFile(name) => checks.push(ConfigCheck {
+            kind: CheckKind::Ok,
+            message: format!("API key: fichier sécurisé ({name})"),
+        }),
+        ApiKeySource::InlineSecret => checks.push(ConfigCheck {
+            kind: CheckKind::Ok,
+            message: format!("API key: {SECRET_MASK}"),
+        }),
+        ApiKeySource::MissingEnv(name) => checks.push(ConfigCheck {
+            kind: CheckKind::Warning,
+            message: format!("API key: {name} manquante. Exportez-la ou stockez-la via LLM."),
+        }),
+        ApiKeySource::NotConfigured => checks.push(ConfigCheck {
+            kind: CheckKind::Warning,
+            message: "API key: non configurée.".to_string(),
+        }),
+        ApiKeySource::NotRequired => checks.push(ConfigCheck {
+            kind: CheckKind::Ok,
+            message: "API key: non requise pour le modèle local".to_string(),
+        }),
+    }
+
+    if config.db.read_only || config.db.safe_mode {
+        checks.push(ConfigCheck {
+            kind: CheckKind::Ok,
+            message: "Sécurité requêtes: activée".to_string(),
+        });
+    } else {
+        checks.push(ConfigCheck {
+            kind: CheckKind::Warning,
+            message: "Sécurité requêtes: désactivée. Activez read_only ou safe_mode.".to_string(),
+        });
+    }
+
+    checks
+}
+
+fn current_api_key_env(config: &AppConfig, default_env: &str) -> String {
+    config
+        .llm
+        .api_key
+        .as_deref()
+        .and_then(|value| value.strip_prefix("env:"))
+        .or_else(|| config.llm_api_key_env())
+        .unwrap_or(default_env)
+        .to_string()
 }
 
 fn validate_env_name(name: &str) -> color_eyre::Result<()> {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
         return Err(color_eyre::eyre::eyre!(
-            "Le nom de variable d'environnement ne peut pas etre vide"
+            "Le nom de variable d'environnement ne peut pas être vide"
         ));
     };
     if !(first == '_' || first.is_ascii_alphabetic()) {
@@ -514,6 +954,38 @@ fn write_private_file(path: &Path, content: &str) -> std::io::Result<()> {
     }
 }
 
+fn secure_env_file_is_private(path: &Path) -> color_eyre::Result<bool> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(path)?.permissions().mode() & 0o777;
+        Ok(mode & 0o077 == 0)
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(true)
+    }
+}
+
+fn secure_env_value_from_path(path: &Path, name: &str) -> color_eyre::Result<Option<String>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let iter = dotenvy::from_path_iter(path)
+        .map_err(|err| color_eyre::eyre::eyre!("Invalid {}: {err}", path.display()))?;
+    for item in iter {
+        let (key, value) =
+            item.map_err(|err| color_eyre::eyre::eyre!("Invalid {}: {err}", path.display()))?;
+        if key == name {
+            return Ok(Some(value));
+        }
+    }
+    Ok(None)
+}
+
 fn dotenv_line_matches_key(line: &str, key: &str) -> bool {
     let trimmed = line.trim_start();
     let trimmed = trimmed.strip_prefix("export ").unwrap_or(trimmed);
@@ -532,23 +1004,6 @@ fn quote_dotenv_value(value: &str) -> String {
     format!("\"{escaped}\"")
 }
 
-fn prompt_model(
-    theme: &ColorfulTheme,
-    current: &str,
-    fallback: &str,
-) -> color_eyre::Result<String> {
-    Ok(Input::with_theme(theme)
-        .with_prompt("Modele")
-        .default(non_empty_or(current, fallback))
-        .interact_text()?)
-}
-
-fn save_config(config: &AppConfig) -> color_eyre::Result<()> {
-    config.save().map_err(|err| color_eyre::eyre::eyre!(err))?;
-    println!("\x1b[32m✓\x1b[0m Configuration sauvegardee");
-    Ok(())
-}
-
 fn non_empty_or(value: &str, fallback: &str) -> String {
     if value.trim().is_empty() {
         fallback.to_string()
@@ -565,6 +1020,10 @@ fn llm_provider_name(provider: &LlmProvider) -> &'static str {
         LlmProvider::Google => "Google",
         LlmProvider::OpenAICompatible => "OpenAI-compatible",
     }
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value { "oui" } else { "non" }
 }
 
 #[cfg(test)]
@@ -633,6 +1092,68 @@ mod tests {
             Some(OPENCODE_ZEN_CHAT_COMPLETIONS_URL)
         );
         assert_eq!(config.llm.api_key.as_deref(), Some("env:OPENCODE_API_KEY"));
+    }
+
+    #[test]
+    fn current_config_overview_masks_inline_api_key() {
+        let mut config = AppConfig::default();
+        config.llm.api_key = Some("sk-test-secret".to_string());
+
+        let rendered = current_config_lines(&config).join("\n");
+
+        assert!(rendered.contains(SECRET_MASK));
+        assert!(!rendered.contains("sk-test-secret"));
+    }
+
+    #[test]
+    fn detailed_config_masks_database_password_and_inline_api_key() {
+        let mut config = AppConfig::default();
+        config.db.uri = "mysql://user:password@localhost/db".to_string();
+        config.llm.api_key = Some("sk-test-secret".to_string());
+
+        let rendered = detailed_config_lines(&config).join("\n");
+
+        assert!(rendered.contains("mysql://user:***@localhost/db"));
+        assert!(rendered.contains(SECRET_MASK));
+        assert!(!rendered.contains("password"));
+        assert!(!rendered.contains("sk-test-secret"));
+    }
+
+    #[test]
+    fn api_key_status_can_report_secure_env_file_without_secret() -> color_eyre::Result<()> {
+        let dir = std::env::temp_dir().join(format!(
+            "dbchat-secure-status-{}-{}",
+            std::process::id(),
+            unique_test_suffix()
+        ));
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join(".env");
+        std::fs::write(&path, "DBCHAT_TEST_STATUS_KEY=\"hidden secret\"\n")?;
+
+        let mut config = AppConfig::default();
+        config.llm.api_key = Some("env:DBCHAT_TEST_STATUS_KEY".to_string());
+
+        let status = api_key_status_for_path(&config, &path);
+
+        assert_eq!(status, "fichier sécurisé (DBCHAT_TEST_STATUS_KEY)");
+        assert!(!status.contains("hidden secret"));
+        Ok(())
+    }
+
+    #[test]
+    fn config_checks_report_missing_api_key_without_value() {
+        let mut config = AppConfig::default();
+        config.db.uri = "postgres://user:pass@localhost/db".to_string();
+        config.llm.api_key = Some("env:DBCHAT_TEST_MISSING_API_KEY_DO_NOT_SET".to_string());
+
+        let rendered = config_checks(&config)
+            .into_iter()
+            .map(|check| check.message)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("DBCHAT_TEST_MISSING_API_KEY_DO_NOT_SET manquante"));
+        assert!(!rendered.contains("pass"));
     }
 
     #[test]
