@@ -1,13 +1,12 @@
 use comfy_table::{Cell, CellAlignment, Table, presets::UTF8_FULL};
 use dbchat_core::ChatResponse;
-use dbchat_core::config::Locale;
 use dbchat_core::error::DbChatError;
 
-pub fn render_response(response: &ChatResponse, format: &str, locale: &Locale) {
+pub fn render_response(response: &ChatResponse, format: &str) {
     match format {
         "json" => render_json(response),
         "csv" => render_csv(response),
-        _ => render_table_default(response, locale),
+        _ => render_table_default(response),
     }
 }
 
@@ -84,7 +83,7 @@ fn render_csv(response: &ChatResponse) {
     }
 }
 
-fn render_table_default(response: &ChatResponse, locale: &Locale) {
+fn render_table_default(response: &ChatResponse) {
     match response {
         ChatResponse::Result {
             sql,
@@ -96,43 +95,30 @@ fn render_table_default(response: &ChatResponse, locale: &Locale) {
                 let values = result.values();
                 let rows = values.len();
                 let timing = format!("{:.3}s", elapsed.as_secs_f64());
-                let label = locale.t("▶ Résultat:", "▶ Result:");
-                let rows_label = locale.t("lignes", "rows");
                 println!(
-                    "\x1b[1;32m{label}\x1b[0m \x1b[1m{rows}\x1b[0m {rows_label} (\x1b[2m{timing}\x1b[0m)"
+                    "\x1b[1;32m▶ Result:\x1b[0m \x1b[1m{rows}\x1b[0m rows (\x1b[2m{timing}\x1b[0m)"
                 );
                 if rows > 0 && !columns.is_empty() {
                     render_table(&columns, &values);
                 } else {
-                    let empty = locale.t("∅ Aucun résultat", "∅ No results");
-                    println!("  \x1b[2m{empty}\x1b[0m");
+                    println!("  \x1b[2m∅ No results\x1b[0m");
                 }
             } else {
                 let affected = result.rows_affected();
                 let timing = format!("{:.3}s", elapsed.as_secs_f64());
-                let label = locale.t("ligne(s) affectée(s)", "row(s) affected");
                 println!(
-                    "\x1b[1;32m✓\x1b[0m \x1b[1m{affected}\x1b[0m {label} (\x1b[2m{timing}\x1b[0m)"
+                    "\x1b[1;32m✓\x1b[0m \x1b[1m{affected}\x1b[0m row(s) affected (\x1b[2m{timing}\x1b[0m)"
                 );
             }
 
             if !sql.is_empty() {
-                let sql_label = locale.t("SQL:", "SQL:");
-                println!("\x1b[2m{sql_label}\x1b[0m \x1b[33m{sql}\x1b[0m");
+                println!("\x1b[2mSQL:\x1b[0m \x1b[33m{sql}\x1b[0m");
             }
         }
         ChatResponse::ConfirmDestructive(sql) => {
-            let warn = locale.t(
-                "⚠ ATTENTION Requête destructive détectée:",
-                "⚠ WARNING Destructive query detected:",
-            );
-            println!("\x1b[1;31m{warn}\x1b[0m");
+            println!("\x1b[1;31m⚠ WARNING Destructive query detected:\x1b[0m");
             println!("  \x1b[33m{sql}\x1b[0m");
-            let hint = locale.t(
-                "Utilisez --read-only ou confirmez avec /sql <requête>",
-                "Use --read-only or confirm with /sql <query>",
-            );
-            println!("  \x1b[2m{hint}\x1b[0m");
+            println!("  \x1b[2mUse --read-only or confirm with /sql <query>\x1b[0m");
         }
         ChatResponse::Info(msg) => {
             println!("\x1b[34mℹ {msg}\x1b[0m");
@@ -177,7 +163,7 @@ pub fn render_table(columns: &[String], values: &[Vec<serde_json::Value>]) {
     if values.len() > 100 {
         let more = values.len() - 100;
         table.add_row(vec![
-            Cell::new(format!("... et {more} lignes supplémentaires"))
+            Cell::new(format!("... and {more} more rows"))
                 .set_alignment(CellAlignment::Center)
                 .fg(comfy_table::Color::DarkGrey),
         ]);
@@ -189,47 +175,30 @@ pub fn render_table(columns: &[String], values: &[Vec<serde_json::Value>]) {
 pub fn render_error(err: &DbChatError) {
     match err {
         DbChatError::Database(e) => {
-            eprintln!("\x1b[1;31m❌ Erreur SQL:\x1b[0m \x1b[31m{e}\x1b[0m");
+            eprintln!("\x1b[1;31m❌ SQL error:\x1b[0m \x1b[31m{e}\x1b[0m");
         }
         DbChatError::Timeout(secs) => {
             eprintln!(
-                "\x1b[1;31m⏱ Délai d'attente dépassé ({secs}s).\x1b[0m Essayez une requête plus simple."
+                "\x1b[1;31m⏱ Timeout after {secs}s.\x1b[0m Try a simpler query."
             );
         }
         DbChatError::Llm(e) => {
-            eprintln!("\x1b[1;31m🤖 Erreur LLM:\x1b[0m \x1b[31m{e}\x1b[0m");
+            eprintln!("\x1b[1;31m🤖 LLM error:\x1b[0m \x1b[31m{e}\x1b[0m");
         }
         DbChatError::Connection(e) => {
-            eprintln!("\x1b[1;31m🔌 Connexion impossible:\x1b[0m \x1b[31m{e}\x1b[0m");
+            eprintln!("\x1b[1;31m🔌 Connection failed:\x1b[0m \x1b[31m{e}\x1b[0m");
         }
         DbChatError::DestructiveQuery => {
-            eprintln!("\x1b[1;31m🛡 Requête destructive bloquée en mode lecture seule.\x1b[0m");
+            eprintln!("\x1b[1;31m🛡 Destructive query blocked in read-only mode.\x1b[0m");
         }
         _ => {
-            eprintln!("\x1b[1;31m✗ Erreur:\x1b[0m \x1b[31m{err}\x1b[0m");
+            eprintln!("\x1b[1;31m✗ Error:\x1b[0m \x1b[31m{err}\x1b[0m");
         }
     }
 }
 
-pub fn render_help(locale: &Locale) {
-    let fr = r#"
-┌──────────────────────────────────────────────────────────┐
-│                    dbchat Aide                          │
-├──────────────────────────────────────────────────────────┤
-│ <question>      Poser une question en langage naturel    │
-│ /tables         Lister les tables de la base             │
-│ /schema         Afficher le schéma détaillé              │
-│ /context        Voir le contexte envoyé au LLM           │
-│ /refresh        Re-scanner le schéma                     │
-│ /verbose        Activer/couper le mode verbose           │
-│ /history        Voir l'historique des questions          │
-│ /config         Voir la configuration courante           │
-│ /clear          Effacer l'écran                          │
-│ /help           Afficher cette aide                      │
-│ /exit           Quitter                                  │
-└──────────────────────────────────────────────────────────┘
-"#;
-    let en = r#"
+pub fn render_help() {
+    let help = r#"
 ┌──────────────────────────────────────────────────────────┐
 │                    dbchat Help                          │
 ├──────────────────────────────────────────────────────────┤
@@ -246,7 +215,7 @@ pub fn render_help(locale: &Locale) {
 │ /exit           Quit                                    │
 └──────────────────────────────────────────────────────────┘
 "#;
-    println!("{}", locale.t(fr, en));
+    println!("{help}");
 }
 
 pub fn print_green(s: impl AsRef<str>) {

@@ -1,28 +1,28 @@
 # dbchat
 
-Chattez avec votre base de données en langage naturel.
+Chat with your database using natural language.
 
 ```
 dbchat postgres://user:pass@localhost/mydb
-dbchat> "donne-moi les 5 derniers clients"
+dbchat> "show me the last 5 customers"
 ```
 
-## Base de test (Docker)
+## Test database (Docker)
 
 ```bash
 cd test-db && docker compose up -d
 ```
 
-Connexion :
+Connect:
 ```bash
 dbchat mysql://dbchat:dbchat@localhost:3306/boutique
 ```
 
-Documentation complète du schéma et exemples → [`test-db/README.md`](test-db/README.md)
+Full schema documentation and examples → [`test-db/README.md`](test-db/README.md)
 
 ## Installation
 
-### Via curl (recommandé)
+### Via curl (recommended)
 
 ```bash
 curl -sSfL https://raw.githubusercontent.com/bashizip/dbchat/main/scripts/install.sh | bash
@@ -40,44 +40,44 @@ curl -sSfL https://raw.githubusercontent.com/bashizip/dbchat/main/scripts/instal
 cargo install --path dbchat-cli
 ```
 
-## Utilisation
+## Usage
 
 ```bash
-# Utilise la dernière configuration connue
+# Use the last known configuration
 dbchat
 
-# Connexion + mode interactif
+# Connect and enter interactive mode
 dbchat postgres://user:pass@localhost/mydb
 dbchat mysql://user:pass@localhost:3306/mydb
 dbchat sqlite:///data/mydb.db
 
-# One-shot
-dbchat postgres://... -q "quel est le CA total ?"
-dbchat postgres://... -q "top 10 produits" -f json
+# One-shot query
+dbchat postgres://... -q "what is the total revenue?"
+dbchat postgres://... -q "top 10 products" -f json
 
-# Avec surcharge du modèle/provider
+# With model/provider override
 dbchat postgres://... --provider anthropic --model claude-haiku-4-5
 dbchat postgres://... --provider openrouter --model openrouter/free
 ```
 
-## Commandes interactives
+## Interactive commands
 
-| Commande | Description |
-|----------|-------------|
-| `votre question` | Question en langage naturel |
-| `/tables` | Liste les tables |
-| `/schema` | Schéma détaillé (colonnes, types, clés) |
-| `/context` | Contexte envoyé au LLM |
-| `/verbose` | Active/désactive le mode verbose |
-| `/history` | Historique des questions |
-| `/config` | Configuration courante |
-| `/refresh` | Re-scanne le schéma |
-| `/clear` | Efface l'écran |
-| `/exit` | Quitte |
+| Command | Description |
+|---------|-------------|
+| `your question` | Ask a question in natural language |
+| `/tables` | List database tables |
+| `/schema` | Show detailed schema (columns, types, keys) |
+| `/context` | Show context sent to LLM |
+| `/verbose` | Toggle verbose mode |
+| `/history` | Show question history |
+| `/config` | Show current configuration |
+| `/refresh` | Re-scan schema |
+| `/clear` | Clear screen |
+| `/exit` | Quit |
 
 ## Configuration
 
-Fichier : `~/.config/dbchat/config.toml`
+File: `~/.config/dbchat/config.toml`
 
 ```toml
 [llm]
@@ -95,65 +95,63 @@ read_only = true
 safe_mode = true
 
 [display]
-locale = "fr"                  # fr | en (auto-détecté via LANG)
 format = "table"               # table | json | csv
 show_sql = true
 verbose = false
 ```
 
 ```bash
-dbchat config         # Assistant interactif
-dbchat config init    # Crée/réinitialise la config par défaut
-dbchat config show    # Affiche la config courante
+dbchat config         # Interactive configuration wizard
+dbchat config init    # Create/reset default config
+dbchat config show    # Show current configuration
 ```
 
-Le menu interactif permet de configurer la connexion BD, le LLM et les paramètres
-opérationnels de sécurité (`read_only`, `safe_mode`, `max_rows`, timeout).
+The interactive menu lets you configure the database connection, LLM provider, and
+query safety settings (`read_only`, `safe_mode`, `max_rows`, timeout).
 
-Modèles via API key :
+Models via API key:
 
 ```bash
 dbchat config
-# puis: LLM -> Gratuits / free tier
-# ou:   LLM -> Payants courants
+# then: LLM -> Free models
+# or:   LLM -> Paid models
 ```
 
-Le wizard configure automatiquement le provider, le modèle, l'URL API si besoin,
-et la variable d'environnement à utiliser pour la clé.
+The wizard automatically configures the provider, model, API URL if needed,
+and the environment variable to use for the key.
 
-Par défaut, dbchat utilise OpenCode Zen avec le modèle gratuit
-`deepseek-v4-flash-free`. Pour l'activer :
+By default, dbchat uses OpenCode Zen with the free `deepseek-v4-flash-free` model. To enable it:
 
-1. Connectez-vous à OpenCode Zen.
-2. Copiez votre API key Zen.
-3. Exportez-la dans votre shell :
+1. Log in to OpenCode Zen.
+2. Copy your Zen API key.
+3. Export it in your shell:
 
 ```bash
-export OPENCODE_API_KEY="votre_cle"
+export OPENCODE_API_KEY="your_key"
 ```
 
-Alternative : collez la clé dans `dbchat config`. dbchat la stockera dans le
-fichier utilisateur `~/.config/dbchat/.env` (`600` sur Unix) et gardera seulement
-`api_key = "env:OPENCODE_API_KEY"` dans `config.toml`. Ce `.env` est global à
-dbchat; dbchat ne charge pas les fichiers `.env` des projets courants.
+Alternatively, paste the key into `dbchat config`. dbchat stores it in the
+`~/.config/dbchat/.env` file (mode `600` on Unix) and only keeps
+`api_key = "env:OPENCODE_API_KEY"` in `config.toml`. This `.env` is global to
+dbchat; dbchat does not load `.env` files from your project directories.
 
-| Choix | Modèle | Clé |
-|-------|--------|-----|
-| Gratuit recommandé | `deepseek-v4-flash-free` via OpenCode Zen | `OPENCODE_API_KEY` |
-| Gratuit / free tier | `gemini-3.1-flash-lite` | `GOOGLE_API_KEY` |
-| Gratuit OpenRouter | `openrouter/free` | `OPENROUTER_API_KEY` |
-| Gratuit OpenRouter | `google/gemma-4-31b-it:free` | `OPENROUTER_API_KEY` |
-| Gratuit OpenRouter | `cohere/north-mini-code:free` | `OPENROUTER_API_KEY` |
-| Payant low-cost | `deepseek-v4-flash` | `DEEPSEEK_API_KEY` |
-| Payant courant | `gpt-5.4-mini`, `gpt-5.5` | `OPENAI_API_KEY` |
-| Payant courant | `claude-haiku-4-5`, `claude-sonnet-5` | `ANTHROPIC_API_KEY` |
-| Payant courant | `gemini-3.5-flash` | `GOOGLE_API_KEY` |
+| Choice | Model | Key |
+|--------|-------|-----|
+| Recommended free | `deepseek-v4-flash-free` via OpenCode Zen | `OPENCODE_API_KEY` |
+| Free tier | `gemini-3.1-flash-lite` | `GOOGLE_API_KEY` |
+| Free OpenRouter | `openrouter/free` | `OPENROUTER_API_KEY` |
+| Free OpenRouter | `google/gemma-4-31b-it:free` | `OPENROUTER_API_KEY` |
+| Free OpenRouter | `cohere/north-mini-code:free` | `OPENROUTER_API_KEY` |
+| Low-cost paid | `deepseek-v4-flash` | `DEEPSEEK_API_KEY` |
+| Common paid | `gpt-5.4-mini`, `gpt-5.5` | `OPENAI_API_KEY` |
+| Common paid | `claude-haiku-4-5`, `claude-sonnet-5` | `ANTHROPIC_API_KEY` |
+| Common paid | `gemini-3.5-flash` | `GOOGLE_API_KEY` |
 
-OpenCode Zen indique que le modèle gratuit est disponible pour une durée limitée
-et que les données envoyées au modèle gratuit peuvent être utilisées pour
-améliorer le modèle pendant cette période.
+OpenCode Zen indicates that the free model is available for a limited time
+and that data sent to the free model may be used to improve the model during
+this period.
 
-Exemple par défaut :
+Default example:
 
 ```toml
 [llm]
@@ -163,7 +161,7 @@ api_url = "https://opencode.ai/zen/v1/chat/completions"
 api_key = "env:OPENCODE_API_KEY"
 ```
 
-Exemple OpenRouter gratuit :
+Free OpenRouter example:
 
 ```toml
 [llm]
@@ -173,7 +171,7 @@ api_url = "https://openrouter.ai/api/v1"
 api_key = "env:OPENROUTER_API_KEY"
 ```
 
-Exemple low-cost :
+Low-cost example:
 
 ```toml
 [llm]
@@ -183,18 +181,17 @@ api_url = "https://api.deepseek.com"
 api_key = "env:DEEPSEEK_API_KEY"
 ```
 
-`deepseek-v4-flash` utilise l'API DeepSeek au format compatible OpenAI. Les
-modèles `:free` passent par OpenRouter et peuvent changer selon la disponibilité
-du provider.
+`deepseek-v4-flash` uses the DeepSeek API in OpenAI-compatible format. The
+`:free` models go through OpenRouter and may change based on provider availability.
 
-## Options CLI
+## CLI Options
 
 ```
-  -q, --query <QUERY>        Mode one-shot
+  -q, --query <QUERY>        One-shot query mode
   -f, --format <FORMAT>      table, json, csv
-  -v, --verbose              Mode verbose
-      --model <MODEL>        Surcouche du modèle
-      --provider <PROVIDER>  Surcouche du provider
-      --read-only            Bloque les requêtes destructives
-      --no-color             Désactive les couleurs
+  -v, --verbose              Verbose mode
+      --model <MODEL>        Model override
+      --provider <PROVIDER>  Provider override
+      --read-only            Block destructive queries
+      --no-color             Disable colors
 ```

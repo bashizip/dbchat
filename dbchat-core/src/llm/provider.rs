@@ -56,18 +56,18 @@ impl LlmClient {
             .unwrap_or_default();
 
         format!(
-            r#"Tu es un expert SQL pour le dialecte {dialect}.
+            r#"You are an SQL expert for {dialect}.
 
-Contexte de la base de données :
+Database context:
 {schema_ctx}
 
-Règles impératives :
-1. Génère UNIQUEMENT du SQL valide.
-2. Utilise strictement le dialecte {dialect}.
-3. Si la requête peut être destructive (DELETE sans WHERE, DROP, TRUNCATE, ALTER), commence par "DESTRUCTIVE:" suivi de la description.
-4. Si la question est ambiguë, commence par "AMBIGUOUS:" suivi de ta question de clarification.
-5. Limite les résultats à 100 lignes avec LIMIT.
-6. Ne mets PAS d'explications. Retourne UNIQUEMENT le SQL."#,
+Rules:
+1. Generate ONLY valid SQL.
+2. Strictly use the {dialect} dialect.
+3. If the query could be destructive (DELETE without WHERE, DROP, TRUNCATE, ALTER), start with "DESTRUCTIVE:" followed by a description.
+4. If the question is ambiguous, start with "AMBIGUOUS:" followed by a clarifying question.
+5. Limit results to 100 rows with LIMIT.
+6. Do NOT include explanations. Return ONLY SQL."#,
         )
     }
 
@@ -109,15 +109,15 @@ Règles impératives :
 
     pub async fn explain_error(&self, sql: &str, error: &str, question: &str) -> Result<String> {
         let prompt = format!(
-            r#"La requête SQL suivante a généré une erreur :
+            r#"The following SQL query generated an error:
 
 SQL: {sql}
-Erreur: {error}
-Question originale: {question}
+Error: {error}
+Original question: {question}
 
-Explique l'erreur en langage naturel et suggère une correction. Réponds en quelques phrases en français."#
+Explain the error in plain language and suggest a fix. Keep it to a few sentences in English."#
         );
-        let body = self.build_chat_body("Tu es un expert SQL.", &prompt);
+        let body = self.build_chat_body("You are an SQL expert.", &prompt);
         let response = self.send_request(body).await?;
         Ok(extract_content(&response))
     }
@@ -125,12 +125,12 @@ Explique l'erreur en langage naturel et suggère une correction. Réponds en que
     pub async fn explain_result(&self, question: &str, sql: &str, summary: &str) -> Result<String> {
         let prompt = format!(
             r#"Question: {question}
-SQL exécuté: {sql}
-Résumé: {summary}
+SQL executed: {sql}
+Summary: {summary}
 
-Explique ces résultats en langage naturel simple. Réponds en français."#
+Explain these results in plain simple English."#
         );
-        let body = self.build_chat_body("Tu es un assistant data.", &prompt);
+        let body = self.build_chat_body("You are a data assistant.", &prompt);
         let response = self.send_request(body).await?;
         Ok(extract_content(&response))
     }
@@ -352,11 +352,13 @@ fn extract_sql(text: &str) -> String {
         .filter(|l| {
             let t = l.trim();
             !t.is_empty()
-                && !t.starts_with("Voici")
                 && !t.starts_with("Here")
-                && !t.starts_with("Je vous")
+                && !t.starts_with("Voici")
+                && !t.starts_with("Sure")
+                && !t.starts_with("Of course")
                 && !t.starts_with("Bien sûr")
                 && !t.starts_with("D'accord")
+                && !t.starts_with("Je vous")
         })
         .collect::<Vec<_>>()
         .join("\n")

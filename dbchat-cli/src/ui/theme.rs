@@ -66,7 +66,7 @@ impl Default for TerminalTheme {
 pub fn mask_secret(value: Option<&str>) -> &'static str {
     match value {
         Some(value) if !value.trim().is_empty() => SECRET_MASK,
-        _ => "non configurée",
+        _ => "not configured",
     }
 }
 
@@ -77,7 +77,7 @@ mod tests {
     #[test]
     fn masks_non_empty_secret() {
         assert_eq!(mask_secret(Some("sk-secret")), SECRET_MASK);
-        assert_eq!(mask_secret(Some("   ")), "non configurée");
-        assert_eq!(mask_secret(None), "non configurée");
+        assert_eq!(mask_secret(Some("   ")), "not configured");
+        assert_eq!(mask_secret(None), "not configured");
     }
 }

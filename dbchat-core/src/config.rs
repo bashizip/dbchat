@@ -96,35 +96,6 @@ pub enum OutputFormat {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum Locale {
-    Fr,
-    En,
-}
-
-impl Locale {
-    pub fn detect() -> Self {
-        std::env::var("LANG")
-            .or_else(|_| std::env::var("LC_ALL"))
-            .or_else(|_| std::env::var("LC_MESSAGES"))
-            .map(|lang| {
-                if lang.to_lowercase().starts_with("fr") {
-                    Locale::Fr
-                } else {
-                    Locale::En
-                }
-            })
-            .unwrap_or(Locale::En)
-    }
-
-    pub fn t<'a>(&self, fr: &'a str, en: &'a str) -> &'a str {
-        match self {
-            Locale::Fr => fr,
-            Locale::En => en,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Theme {
     Dark,
     Light,
@@ -133,7 +104,6 @@ pub enum Theme {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DisplayConfig {
     pub theme: Theme,
-    pub locale: Locale,
     pub show_sql: bool,
     pub show_timing: bool,
     pub format: OutputFormat,
@@ -142,10 +112,8 @@ pub struct DisplayConfig {
 
 impl Default for DisplayConfig {
     fn default() -> Self {
-        let locale = Locale::detect();
         Self {
             theme: Theme::Dark,
-            locale,
             show_sql: true,
             show_timing: true,
             format: OutputFormat::Table,
@@ -180,7 +148,7 @@ impl AppConfig {
         } else if uri.starts_with("sqlite://") {
             DbEngine::Sqlite
         } else {
-            return Err(format!("URI non reconnue : {uri}"));
+            return Err(format!("Unknown URI scheme: {uri}"));
         };
 
         Ok(Self {
@@ -310,13 +278,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_locale_detect() {
-        let locale = Locale::detect();
-        // Just check it doesn't panic
-        let _ = locale.t("français", "english");
-    }
-
-    #[test]
     fn test_from_uri_postgres() {
         let config = AppConfig::from_uri("postgres://user:pass@localhost/db").unwrap();
         assert_eq!(config.db.engine, DbEngine::Postgres);
@@ -398,7 +359,6 @@ temperature = 0.0
 
 [display]
 theme = "Dark"
-locale = "En"
 show_sql = true
 show_timing = true
 format = "Table"

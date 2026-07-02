@@ -82,7 +82,7 @@ impl TerminalUi {
         println!(
             "{}",
             self.theme
-                .muted("↑/↓ naviguer · Entrée sélectionner · Esc retour · Ctrl+C quitter")
+                .muted("↑/↓ navigate · Enter select · Esc back · Ctrl+C quit")
         );
     }
 
@@ -117,7 +117,7 @@ impl TerminalUi {
     pub fn wait_for_enter(&self) -> color_eyre::Result<()> {
         let mut stdout = io::stdout();
         println!();
-        write!(stdout, "{}", self.theme.muted("Entrée pour revenir"))?;
+        write!(stdout, "{}", self.theme.muted("Press Enter to go back"))?;
         stdout.flush()?;
 
         let mut buffer = String::new();

@@ -57,11 +57,7 @@ impl DbChat {
         }
 
         if generation.sql.is_empty() {
-            let msg = self.config.display.locale.t(
-                "Impossible de générer une requête SQL.",
-                "Failed to generate SQL query.",
-            );
-            return Ok(ChatResponse::Info(msg.to_string()));
+            return Ok(ChatResponse::Info("Failed to generate SQL query.".to_string()));
         }
 
         if is_destructive(&generation.sql) {

@@ -97,10 +97,10 @@ async fn main() -> color_eyre::Result<()> {
     } else if config.has_database_uri() {
         config_wizard::print_config_summary(&config);
     } else {
-        println!("Aucune configuration de connexion trouvee.");
+        println!("No database connection configured.");
         config = config_wizard::run_config_menu(config)?;
         if !config.has_database_uri() {
-            println!("Aucune connexion BD configuree. Relancez `dbchat config`.");
+            println!("No database connection configured. Run `dbchat config`.");
             return Ok(());
         }
     }
@@ -122,25 +122,22 @@ async fn main() -> color_eyre::Result<()> {
     }
     resolve_llm_api_key(&mut config)?;
 
-    let locale = config.display.locale.clone();
     let uri = config.db.uri.clone();
 
     if let Some(query) = &cli.query {
         let mut dbchat = dbchat_core::DbChat::connect(config).await?;
         let response = dbchat.chat(query).await?;
-        render::render_response(&response, &cli.format, &locale);
+        render::render_response(&response, &cli.format);
         return Ok(());
     }
 
     let mut dbchat = dbchat_core::DbChat::connect(config).await?;
     println!(
-        "\x1b[1;32m✓\x1b[0m {} \x1b[36m{uri}\x1b[0m",
-        locale.t("Connecté à", "Connected to"),
+        "\x1b[1;32m✓\x1b[0m Connected to \x1b[36m{uri}\x1b[0m",
         uri = redact_uri(&uri),
     );
     println!(
-        "\x1b[34mℹ\x1b[0m {} {}",
-        locale.t("tables trouvées.", "tables found."),
+        "\x1b[34mℹ\x1b[0m {} tables found.",
         dbchat.schema.tables.len()
     );
     println!();
@@ -299,7 +296,7 @@ fn apply_provider_override(
         }
         _ => {
             return Err(color_eyre::eyre::eyre!(
-                "Provider inconnu : {provider} (opencode, openrouter, deepseek, openai, anthropic, ollama, google, openai-compatible)"
+                "Unknown provider: {provider} (opencode, openrouter, deepseek, openai, anthropic, ollama, google, openai-compatible)"
             ));
         }
     };
